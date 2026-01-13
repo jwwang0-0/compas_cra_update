@@ -60,7 +60,7 @@ def friction_setup(assembly, mu, penalty=False, friction_net=False, verbose=Fals
     return afr
 
 
-def external_force_setup(assembly, density, verbose=False):
+def external_force_setup(assembly, density, external_forces: dict | None = None):
     """Set up external force vector.
 
     Parameters
@@ -70,13 +70,15 @@ def external_force_setup(assembly, density, verbose=False):
     density : float
         Density of the material.
         If density attribute is not set, optimisation will use this density value.
-
+    external_forces: dict
+        External forces applied to the node
     Returns
     -------
     :class:`~numpy.ndarray`
         External force p.
 
     """
+    external_forces = {} if external_forces is None else external_forces
     free = free_nodes(assembly)
 
     num_nodes = assembly.graph.number_of_nodes()
@@ -87,8 +89,13 @@ def external_force_setup(assembly, density, verbose=False):
         block = assembly.node_block(node)
         index = key_index[node]
         p[index][2] = -block.volume() * (block.attributes["density"] if "density" in block.attributes else density)
-        if verbose:
-            print((block.attributes["density"] if "density" in block.attributes else density))
+        # if verbose:
+        #     print((block.attributes["density"] if "density" in block.attributes else density))
+        if node in external_forces:
+            print(f"adding external forces to node {node}")
+            for i in range(6):
+                p[index][i] = p[index][i] + external_forces[node][i]
+            print(f"new forces is p{p[index]}")
 
     p = np.array(p, dtype=float)
     p = p[free, :].reshape((-1, 1), order="C")

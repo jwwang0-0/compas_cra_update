@@ -24,7 +24,8 @@ def rbe_solve(
     verbose: bool = False,
     timer: bool = False,
     penalty: bool =  True,
-    solver_options: dict = None
+    solver_options: dict = None,
+    external_forces: dict | None = None,
 ) -> Assembly:
     r"""RBE solver with penalty formulation using Pyomo + IPOPT.
 
@@ -66,6 +67,7 @@ def rbe_solve(
     `Coupled Rigid-Block Analysis: Stability-Aware Design of Complex Discrete-Element Assemblies <https://doi.org/10.1016/j.cad.2022.103216>`_
 
     """
+    external_forces = {} if external_forces is None else external_forces
 
     model = pyo.ConcreteModel()
 
@@ -83,7 +85,7 @@ def rbe_solve(
 
     aeq_b = equilibrium_setup(assembly, penalty=penalty, verbose=verbose)
     afr_b = friction_setup(assembly, mu, penalty=penalty, verbose=verbose)
-    p = external_force_setup(assembly, density)
+    p = external_force_setup(assembly, density, external_forces)
 
     obj_rbe = objectives("rbe", (0, 1e0, 1e6, 1e0))
     eq_con, fr_con = static_equilibrium_constraints(model, aeq_b, afr_b, p)
@@ -100,6 +102,8 @@ def rbe_solve(
         start_time = time.time()
 
     solver = pyo.SolverFactory("ipopt")
+    #solver = pyo.SolverFactory('gurobi')
+    #solver = pyo.SolverFactory("ipopt", executable="C:/Users/jingwang/.conda/envs/robtod2_test/Library/bin/ipopt.exe")
     solver.options.update(solver_options)
     result = solver.solve(model, tee=verbose)
 
