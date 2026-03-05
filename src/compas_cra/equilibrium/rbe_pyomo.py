@@ -77,17 +77,23 @@ def rbe_solve(
     if solver_options is None:
         solver_options = {}
 
-    v_num = num_vertices(assembly)  # number of vertices
+    v_num = num_vertices(assembly)  # number of vertices (including fix and free)
 
-    model.f_id = pyo.Set(initialize=range(v_num * 4))  # force indices
-    model.f = pyo.Var(model.f_id, initialize=0, domain=bounds("f_tilde"))
+    #Unknown
+    if penalty == True:
+        model.f_id = pyo.Set(initialize=range(v_num * 4))  # [fn+, fn-, fu, fv] force indices # 4 2 directional friction force and positive tension and negative compression
+        model.f = pyo.Var(model.f_id, initialize=0, domain=bounds("f_tilde")) # bounds function => [fn+, fn-] Non-negative Real, [fu, fv] Real 
+    else:
+        model.f_id = pyo.Set(initialize=range(v_num * 3))  # [fn, fu, fv] force indices # 3 2 directional friction force and positive tension and negative compression
+        model.f = pyo.Var(model.f_id, initialize=0, domain=bounds("f")) # bounds function => [fn] Non-negative Real, [fu, fv] Real 
     model.array_f = np.array([model.f[i] for i in model.f_id])
 
-    aeq_b = equilibrium_setup(assembly, penalty=penalty, verbose=verbose)
-    afr_b = friction_setup(assembly, mu, penalty=penalty, verbose=verbose)
-    p = external_force_setup(assembly, density, external_forces)
+    #Known
+    aeq_b = equilibrium_setup(assembly, penalty=penalty, verbose=verbose) #all known
+    afr_b = friction_setup(assembly, mu, penalty=penalty, verbose=verbose) #all known
+    p = external_force_setup(assembly, density, external_forces) #all known
 
-    obj_rbe = objectives("rbe", (0, 1e0, 1e6, 1e0))
+    obj_rbe = objectives("rbe", (0, 1e0, 1e6, 1e0)) #minimize the sum of everything
     eq_con, fr_con = static_equilibrium_constraints(model, aeq_b, afr_b, p)
 
     model.obj = pyo.Objective(rule=obj_rbe, sense=pyo.minimize)
