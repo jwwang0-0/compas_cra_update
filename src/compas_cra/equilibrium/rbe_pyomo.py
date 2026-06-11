@@ -93,7 +93,7 @@ def rbe_solve(
     afr_b = friction_setup(assembly, mu, penalty=penalty, verbose=verbose) #all known
     p = external_force_setup(assembly, density, external_forces) #all known
 
-    obj_rbe = objectives("rbe", (0, 1e0, 1e6, 1e0)) #minimize the sum of everything
+    obj_rbe = objectives("rbe", (0, 1e0, 1e6, 1e0), penalty=penalty)  # minimize the sum of everything
     eq_con, fr_con = static_equilibrium_constraints(model, aeq_b, afr_b, p)
 
     model.obj = pyo.Objective(rule=obj_rbe, sense=pyo.minimize)
@@ -107,8 +107,8 @@ def rbe_solve(
     if timer:
         start_time = time.time()
 
-    solver = pyo.SolverFactory("ipopt")
-    #solver = pyo.SolverFactory('gurobi')
+    #solver = pyo.SolverFactory("ipopt")
+    solver = pyo.SolverFactory('gurobi')
     #solver = pyo.SolverFactory("ipopt", executable="C:/Users/jingwang/.conda/envs/robtod2_test/Library/bin/ipopt.exe")
     solver.options.update(solver_options)
     result = solver.solve(model, tee=verbose)

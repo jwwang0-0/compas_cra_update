@@ -78,9 +78,11 @@ Then we identify planar interfaces between blocks automatically.
 5. Solving equilibrium
 ----------------------
 
-:mod:`compas_cra` provides three solvers:
+:mod:`compas_cra` provides equilibrium and force-range solvers:
 
 - RBE Solve: :mod:`compas_cra.equilibrium.rbe_solve`.
+- Robust RBE Force Range: :mod:`compas_cra.equilibrium.rbe_robust_sample` and
+  :mod:`compas_cra.equilibrium.rbe_robust_support`.
 - CRA Solve: :mod:`compas_cra.equilibrium.cra_solve`.
 - CRA Penalty Solve: :mod:`compas_cra.equilibrium.cra_penalty_solve`.
 

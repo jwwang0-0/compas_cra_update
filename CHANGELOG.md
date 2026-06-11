@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* Add objective-free robust RBE sampling and dual support-function analyses for two-dimensional safe load ranges.
+
 ### Changed
+
+* Fix Pyomo force-objective weighting for three- and four-component contact force layouts.
 
 ### Removed
 

@@ -15,6 +15,9 @@ Solvers
     cra_solve
     cra_penalty_solve
     rbe_solve
+    rbe_robust_sample
+    rbe_robust_support
+    RobustForceResult
 
 --------------------------
 
