@@ -9,11 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* Add objective-free robust RBE sampling and dual support-function analyses for two-dimensional safe load ranges.
+* Add robust RBE radial sampling, primal and dual support-function analyses, and optional Matplotlib visualization for two-dimensional safe load ranges.
 
 ### Changed
 
 * Fix Pyomo force-objective weighting for three- and four-component contact force layouts.
+* Allow robust RBE analyses to use shifted feasible load regions that do not contain the load-increment origin.
 
 ### Removed
 

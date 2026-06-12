@@ -9,7 +9,7 @@ from compas_cra.equilibrium import rbe_solve
 
 def test_rbe_penalty():
     support = Box(1, 1, 1)  # supporting block
-    free1 = Box(1, 1, 1, frame=Frame.worldXY().transformed(Translation.from_vector([0.75, 0, 1])))  # block to analyse
+    free1 = Box(1, 1, 1, frame=Frame.worldXY().transformed(Translation.from_vector([0.5, 0, 1])))  # block to analyse
 
     assembly = CRA_Assembly()
     assembly.add_block(Block.from_shape(support), node=0)
@@ -34,3 +34,6 @@ def test_rbe_penalty():
     print("weight", weight)
     print("resultant", resultant)
     assert round(weight, 2) == round(resultant, 2)
+
+if __name__ == "__main__":
+    test_rbe_penalty()

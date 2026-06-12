@@ -17,6 +17,9 @@ Solvers
     rbe_solve
     rbe_robust_sample
     rbe_robust_support
+    rbe_robust_support_primal
+    rbe_robust_support_dual
+    plot_rbe_robust_results
     RobustForceResult
 
 --------------------------

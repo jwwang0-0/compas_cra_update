@@ -7,8 +7,10 @@ from compas.geometry import Translation
 from compas_assembly.datastructures import Block
 
 from compas_cra.datastructures import CRA_Assembly
+from compas_cra.equilibrium import plot_rbe_robust_results
 from compas_cra.equilibrium import rbe_robust_sample
-from compas_cra.equilibrium import rbe_robust_support
+from compas_cra.equilibrium import rbe_robust_support_dual
+from compas_cra.equilibrium import rbe_robust_support_primal
 
 support = Box(1, 1, 1)
 free = Box(1, 1, 1, frame=Frame.worldXY().transformed(Translation.from_vector([0, 0, 1])))
@@ -26,8 +28,15 @@ interface.add_face([0, 1, 2, 3])
 assembly.add_interfaces_from_meshes([interface], 0, 1)
 
 load_dofs = [(1, "fx"), (1, "fy")]
-inner = rbe_robust_sample(assembly, load_dofs)
-outer = rbe_robust_support(assembly, load_dofs)
+radial = rbe_robust_sample(assembly, load_dofs)
+primal = rbe_robust_support_primal(assembly, load_dofs)
+dual = rbe_robust_support_dual(assembly, load_dofs)
 
-print(inner.polygon)
-print(outer.polygon)
+print(radial.inner_polygon)
+print(primal.inner_polygon)
+print(dual.outer_polygon)
+
+figure, axes = plot_rbe_robust_results(
+    [radial, primal, dual],
+    labels=["radial sampling", "primal support", "dual support"],
+)

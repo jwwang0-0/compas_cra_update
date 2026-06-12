@@ -1,3 +1,4 @@
+from compas_assembly.algorithms import assembly_interfaces_numpy
 import numpy as np
 import pytest
 from compas.datastructures import Mesh
@@ -11,9 +12,12 @@ from scipy.sparse import hstack
 from scipy.sparse import vstack
 
 from compas_cra.datastructures import CRA_Assembly
+from compas_cra.equilibrium import plot_rbe_robust_results
 from compas_cra.equilibrium import RobustForceResult
 from compas_cra.equilibrium import rbe_robust_sample
 from compas_cra.equilibrium import rbe_robust_support
+from compas_cra.equilibrium import rbe_robust_support_dual
+from compas_cra.equilibrium import rbe_robust_support_primal
 from compas_cra.equilibrium.cra_helper import equilibrium_setup
 from compas_cra.equilibrium.cra_helper import external_force_setup
 from compas_cra.equilibrium.cra_helper import friction_setup
@@ -28,13 +32,17 @@ def two_block_assembly():
     assembly.add_block(Block.from_shape(support), node=0)
     assembly.add_block(Block.from_shape(free), node=1)
     assembly.set_boundary_conditions([0])
-
-    interface = Mesh()
-    corners = [[0.5, 0.5, 0.5], [-0.5, 0.5, 0.5], [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5]]
-    for index, xyz in enumerate(corners):
-        interface.add_vertex(key=index, x=xyz[0], y=xyz[1], z=xyz[2])
-    interface.add_face([0, 1, 2, 3])
-    assembly.add_interfaces_from_meshes([interface], 0, 1)
+    try:
+        assembly_interfaces_numpy(assembly, amin=1e-6, tmax=1e-4)
+    except TypeError as error:
+        if "cannot unpack non-iterable int object" not in str(error):
+            raise
+        interface = Mesh()
+        corners = [[0.5, 0.5, 0.5], [-0.5, 0.5, 0.5], [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5]]
+        for index, xyz in enumerate(corners):
+            interface.add_vertex(key=index, x=xyz[0], y=xyz[1], z=xyz[2])
+        interface.add_face([0, 1, 2, 3])
+        assembly.add_interfaces_from_meshes([interface], 0, 1)
     return assembly
 
 
@@ -83,11 +91,13 @@ def test_robust_sample_and_support_bound_horizontal_loads():
     interface = assembly.graph.edge_attribute((0, 1), "interfaces")[0]
 
     sampled = rbe_robust_sample(assembly, [(1, "fx"), (1, "fy")], density=1)
-    supported = rbe_robust_support(assembly, [(1, "fx"), (1, "fy")], density=1)
+    supported = rbe_robust_support_dual(assembly, [(1, "fx"), (1, "fy")], density=1)
 
     assert isinstance(sampled, RobustForceResult)
     assert sampled.origin_feasible
     assert supported.origin_feasible
+    assert sampled.feasible_center == pytest.approx([0.0, 0.0])
+    assert supported.feasible_center == pytest.approx([0.0, 0.0])
     assert sampled.is_bounded
     assert supported.is_bounded
     assert len(sampled.directions) == 36
@@ -95,6 +105,8 @@ def test_robust_sample_and_support_bound_horizontal_loads():
     assert len(supported.support_values) == 36
     assert len(sampled.polygon) >= 3
     assert len(supported.polygon) >= 3
+    assert sampled.polygon == sampled.inner_polygon
+    assert supported.polygon == supported.outer_polygon
     assert polygon_area(sampled.polygon) > 0
     assert polygon_area(supported.polygon) > 0
     assert interface.forces is None
@@ -112,6 +124,36 @@ def test_dual_support_matches_independent_primal_lp():
     assert result.support_values[9] == pytest.approx(primal_support(assembly, [0.0, 1.0]))
 
 
+def test_primal_and_dual_support_formulations_match():
+    assembly = two_block_assembly()
+    primal = rbe_robust_support_primal(assembly, [(1, "fx"), (1, "fy")], density=1)
+    dual = rbe_robust_support_dual(assembly, [(1, "fx"), (1, "fy")], density=1)
+
+    assert primal.support_formulation == "primal"
+    assert dual.support_formulation == "dual"
+    assert primal.support_values == pytest.approx(dual.support_values)
+    assert np.asarray(primal.halfspaces) == pytest.approx(np.asarray(dual.halfspaces))
+    assert np.asarray(primal.outer_polygon) == pytest.approx(np.asarray(dual.outer_polygon))
+    assert len(primal.support_points) == len(primal.directions)
+    assert len(primal.inner_polygon) >= 3
+    assert polygon_area(primal.inner_polygon) > 0
+    assert primal.polygon == primal.outer_polygon
+
+    for point in primal.support_points:
+        for direction_0, direction_1, support in dual.halfspaces:
+            assert direction_0 * point[0] + direction_1 * point[1] <= support + 1e-7
+
+
+def test_legacy_support_api_uses_dual_formulation():
+    assembly = two_block_assembly()
+    legacy = rbe_robust_support(assembly, [(1, "fx"), (1, "fy")], density=1, num_directions=12)
+    explicit = rbe_robust_support_dual(assembly, [(1, "fx"), (1, "fy")], density=1, num_directions=12)
+
+    assert legacy.support_formulation == "dual"
+    assert legacy.support_values == pytest.approx(explicit.support_values)
+    assert np.asarray(legacy.polygon) == pytest.approx(np.asarray(explicit.polygon))
+
+
 @pytest.mark.parametrize(
     "load_dofs",
     [
@@ -127,10 +169,13 @@ def test_invalid_load_dofs_raise(load_dofs):
         rbe_robust_sample(two_block_assembly(), load_dofs, density=1, num_directions=4)
 
 
-@pytest.mark.parametrize("solver", [rbe_robust_sample, rbe_robust_support])
-def test_infeasible_baseline_raises(solver):
+@pytest.mark.parametrize(
+    "solver",
+    [rbe_robust_sample, rbe_robust_support_primal, rbe_robust_support_dual],
+)
+def test_empty_safe_load_set_raises(solver):
     upward_force = {1: [0, 0, 2, 0, 0, 0]}
-    with pytest.raises(ValueError, match="baseline load is infeasible"):
+    with pytest.raises(ValueError, match="safe load set is empty"):
         solver(
             two_block_assembly(),
             [(1, "fx"), (1, "fy")],
@@ -140,10 +185,33 @@ def test_infeasible_baseline_raises(solver):
         )
 
 
+def test_shifted_safe_load_set_does_not_require_feasible_origin():
+    assembly = two_block_assembly()
+    external_forces = {1: [2.0, 0, 0, 0, 0, 0]}
+    sampled = rbe_robust_sample(assembly, [(1, "fx"), (1, "fy")], density=1, external_forces=external_forces)
+    primal = rbe_robust_support_primal(assembly, [(1, "fx"), (1, "fy")], density=1, external_forces=external_forces)
+    dual = rbe_robust_support_dual(assembly, [(1, "fx"), (1, "fy")], density=1, external_forces=external_forces)
+
+    for result in (sampled, primal, dual):
+        assert not result.origin_feasible
+        assert result.is_bounded
+        assert result.feasible_center[0] < 0
+
+    assert sampled.feasible_center == pytest.approx(primal.feasible_center)
+    assert primal.feasible_center == pytest.approx(dual.feasible_center)
+    assert primal.support_values == pytest.approx(dual.support_values)
+
+    for direction, limit, point in zip(sampled.directions, sampled.radial_limits, sampled.boundary_points):
+        expected = np.asarray(sampled.feasible_center) + limit * np.asarray(direction)
+        assert point == pytest.approx(expected)
+        for direction_0, direction_1, support in dual.halfspaces:
+            assert direction_0 * point[0] + direction_1 * point[1] <= support + 1e-7
+
+
 def test_known_baseline_force_translates_increment_range():
     assembly = two_block_assembly()
-    reference = rbe_robust_support(assembly, [(1, "fx"), (1, "fy")], density=1)
-    shifted = rbe_robust_support(
+    reference = rbe_robust_support_dual(assembly, [(1, "fx"), (1, "fy")], density=1)
+    shifted = rbe_robust_support_dual(
         assembly,
         [(1, "fx"), (1, "fy")],
         density=1,
@@ -154,10 +222,55 @@ def test_known_baseline_force_translates_increment_range():
     assert shifted.support_values[18] == pytest.approx(reference.support_values[18] + 0.1)
 
 
-@pytest.mark.parametrize("solver", [rbe_robust_sample, rbe_robust_support])
+@pytest.mark.parametrize(
+    "solver",
+    [rbe_robust_sample, rbe_robust_support_primal, rbe_robust_support_dual],
+)
 def test_downward_vertical_load_is_unbounded(solver):
     result = solver(two_block_assembly(), [(1, "fz"), (1, "fx")], density=1, num_directions=12)
 
     assert not result.is_bounded
     assert "unbounded" in result.statuses
+    assert len(result.feasible_center) == 2
+    assert result.inner_polygon == []
+    assert result.outer_polygon == []
     assert result.polygon == []
+
+
+def test_plot_robust_results_with_matplotlib_agg():
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+
+    assembly = two_block_assembly()
+    sampled = rbe_robust_sample(assembly, [(1, "fx"), (1, "fy")], density=1, num_directions=12)
+    primal = rbe_robust_support_primal(assembly, [(1, "fx"), (1, "fy")], density=1, num_directions=12)
+    dual = rbe_robust_support_dual(assembly, [(1, "fx"), (1, "fy")], density=1, num_directions=12)
+
+    figure, axes = plot_rbe_robust_results(sampled)
+    assert axes.figure is figure
+
+    comparison_figure, comparison_axes = plot_rbe_robust_results(
+        [sampled, primal, dual],
+        labels=["ray", "primal", "dual"],
+    )
+    assert comparison_axes.figure is comparison_figure
+
+    import matplotlib.pyplot as plt
+
+    # figure.savefig("robust_result.png", dpi=200, bbox_inches="tight")
+    # comparison_figure.savefig("robust_comparison.png", dpi=200, bbox_inches="tight")
+
+    plt.close(figure)
+    plt.close(comparison_figure)
+
+# if __name__ == "__main__":
+    test_robust_sample_and_support_bound_horizontal_loads()
+    test_dual_support_matches_independent_primal_lp()
+    test_primal_and_dual_support_formulations_match()
+    test_legacy_support_api_uses_dual_formulation()
+    test_invalid_load_dofs_raise()
+    test_empty_safe_load_set_raises()
+    test_shifted_safe_load_set_does_not_require_feasible_origin()
+    test_known_baseline_force_translates_increment_range()
+    test_downward_vertical_load_is_unbounded()
+    test_plot_robust_results_with_matplotlib_agg()      
