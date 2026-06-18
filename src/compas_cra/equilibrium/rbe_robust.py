@@ -4,14 +4,16 @@ For ``B`` free blocks and ``V`` interface vertices, the safe load set is
 
 .. math::
 
-    U = \{u \in \mathbb{R}^2 \mid \exists f:
-    A f + T u = -p_0,\ H f \leq 0\}.
+    U = \{u \in \mathbb{R}^2 \mid \exists x:
+    A x = -p_0,\ H x \leq h,\ u = P x\}.
 
-Here, ``A`` is the ``(6B, 3V)`` equilibrium matrix, ``H`` is the
-``(9V, 3V)`` friction and compression matrix, ``p0`` is the ``(6B,)``
-baseline wrench vector, and ``T`` is the ``(6B, 2)`` basis for the selected
-load components. The variables ``f`` and ``u`` contain ``3V`` contact-force
-components and two unknown load increments, respectively.
+Here, ``A`` is the equilibrium matrix, ``H`` stores friction, compression, and
+optional load-application bounds, ``p0`` is the baseline wrench vector, and
+``P`` projects decision variables to the two visible load components. In the
+legacy center-applied case, ``x`` contains contact-force components followed by
+the two visible load increments. When load-application points are provided,
+``x`` instead contains contact-force components followed by hidden point-force
+components whose sum and generated moments define the visible load.
 """
 
 import math
@@ -28,7 +30,6 @@ from typing import Union
 import numpy as np
 from compas_assembly.datastructures import Assembly
 from scipy.optimize import linprog
-from scipy.sparse import bmat
 from scipy.sparse import csr_matrix
 from scipy.sparse import hstack
 from scipy.sparse import vstack
@@ -49,6 +50,7 @@ _COMPONENT_INDEX = {
     "my": 4,
     "mz": 5,
 }
+_FORCE_COMPONENTS = {"fx", "fy", "fz"}
 
 
 @dataclass
@@ -120,12 +122,13 @@ class RobustForceResult:
 
 @dataclass
 class _RobustProblem:
-    """Sparse matrices defining ``A f + T u = -p0`` and ``H f <= 0``."""
+    """Sparse matrices defining equilibrium, constraints, and visible load projection."""
 
     equilibrium: csr_matrix
     inequalities: csr_matrix
+    inequality_rhs: np.ndarray
     baseline_load: np.ndarray
-    load_basis: csr_matrix
+    load_projection: csr_matrix
     load_dofs: Tuple[Tuple[Any, str], Tuple[Any, str]]
 
 
@@ -144,6 +147,8 @@ def rbe_robust_sample(
     mu: float = 0.84,
     density: float = 1.0,
     external_forces: Optional[dict] = None,
+    load_application_points: Optional[dict] = None,
+    application_force_bound: Optional[float] = None,
     num_directions: int = 36,
     tolerance: float = 1e-8,
     solver_options: Optional[dict] = None,
@@ -170,6 +175,13 @@ def rbe_robust_sample(
         Default block density.
     external_forces : dict, optional
         Known baseline wrenches keyed by assembly node.
+    load_application_points : dict, optional
+        Candidate global load-application points keyed by the loaded node. When
+        omitted, the two visible load components are applied directly at the
+        block center.
+    application_force_bound : float, optional
+        Symmetric bound for each hidden load-application force component. Only
+        used when ``load_application_points`` is provided.
     num_directions : int, optional
         Number of uniformly spaced radial directions.
     tolerance : float, optional
@@ -194,7 +206,15 @@ def rbe_robust_sample(
         If HiGHS reports an unexpected numerical or solver failure.
     """
     start_time = time.time()
-    problem = _prepare_problem(assembly, load_dofs, mu, density, external_forces)
+    problem = _prepare_problem(
+        assembly,
+        load_dofs,
+        mu,
+        density,
+        external_forces,
+        load_application_points,
+        application_force_bound,
+    )
     directions = _directions(num_directions)
     options = dict(solver_options or {})
     _validate_tolerance(tolerance)
@@ -234,6 +254,8 @@ def rbe_robust_support_primal(
     mu: float = 0.84,
     density: float = 1.0,
     external_forces: Optional[dict] = None,
+    load_application_points: Optional[dict] = None,
+    application_force_bound: Optional[float] = None,
     num_directions: int = 36,
     tolerance: float = 1e-8,
     solver_options: Optional[dict] = None,
@@ -266,6 +288,13 @@ def rbe_robust_support_primal(
         Default block density.
     external_forces : dict, optional
         Known baseline wrenches keyed by assembly node.
+    load_application_points : dict, optional
+        Candidate global load-application points keyed by the loaded node. When
+        omitted, the two visible load components are applied directly at the
+        block center.
+    application_force_bound : float, optional
+        Symmetric bound for each hidden load-application force component. Only
+        used when ``load_application_points`` is provided.
     num_directions : int, optional
         Number of uniformly spaced support directions.
     tolerance : float, optional
@@ -291,7 +320,15 @@ def rbe_robust_support_primal(
         If HiGHS reports an unexpected numerical or solver failure.
     """
     start_time = time.time()
-    problem = _prepare_problem(assembly, load_dofs, mu, density, external_forces)
+    problem = _prepare_problem(
+        assembly,
+        load_dofs,
+        mu,
+        density,
+        external_forces,
+        load_application_points,
+        application_force_bound,
+    )
     directions = _directions(num_directions)
     options = dict(solver_options or {})
     _validate_tolerance(tolerance)
@@ -338,6 +375,8 @@ def rbe_robust_support_dual(
     mu: float = 0.84,
     density: float = 1.0,
     external_forces: Optional[dict] = None,
+    load_application_points: Optional[dict] = None,
+    application_force_bound: Optional[float] = None,
     num_directions: int = 36,
     tolerance: float = 1e-8,
     solver_options: Optional[dict] = None,
@@ -363,6 +402,13 @@ def rbe_robust_support_dual(
         Default block density.
     external_forces : dict, optional
         Known baseline wrenches keyed by assembly node.
+    load_application_points : dict, optional
+        Candidate global load-application points keyed by the loaded node. When
+        omitted, the two visible load components are applied directly at the
+        block center.
+    application_force_bound : float, optional
+        Symmetric bound for each hidden load-application force component. Only
+        used when ``load_application_points`` is provided.
     num_directions : int, optional
         Number of uniformly spaced support directions.
     tolerance : float, optional
@@ -387,7 +433,15 @@ def rbe_robust_support_dual(
         If HiGHS reports an unexpected numerical or solver failure.
     """
     start_time = time.time()
-    problem = _prepare_problem(assembly, load_dofs, mu, density, external_forces)
+    problem = _prepare_problem(
+        assembly,
+        load_dofs,
+        mu,
+        density,
+        external_forces,
+        load_application_points,
+        application_force_bound,
+    )
     directions = _directions(num_directions)
     options = dict(solver_options or {})
     _validate_tolerance(tolerance)
@@ -428,6 +482,8 @@ def rbe_robust_support(
     mu: float = 0.84,
     density: float = 1.0,
     external_forces: Optional[dict] = None,
+    load_application_points: Optional[dict] = None,
+    application_force_bound: Optional[float] = None,
     num_directions: int = 36,
     tolerance: float = 1e-8,
     solver_options: Optional[dict] = None,
@@ -441,6 +497,8 @@ def rbe_robust_support(
         mu=mu,
         density=density,
         external_forces=external_forces,
+        load_application_points=load_application_points,
+        application_force_bound=application_force_bound,
         num_directions=num_directions,
         tolerance=tolerance,
         solver_options=solver_options,
@@ -456,6 +514,8 @@ def plot_rbe_robust_results(
     show_points: bool = True,
     show_center: bool = True,
     show_origin: bool = True,
+    xlim: Optional[Sequence[float]] = None,
+    ylim: Optional[Sequence[float]] = None,
 ):
     """Plot one or more two-dimensional robust RBE result regions.
 
@@ -477,6 +537,12 @@ def plot_rbe_robust_results(
         Draw each feasible sampling center.
     show_origin : bool, optional
         Draw the load-increment origin.
+    xlim : sequence[float], optional
+        Two finite increasing x-axis limits. Together with ``ylim``, these
+        limits clip unbounded result regions for visualization.
+    ylim : sequence[float], optional
+        Two finite increasing y-axis limits. Together with ``xlim``, these
+        limits clip unbounded result regions for visualization.
 
     Returns
     -------
@@ -509,6 +575,8 @@ def plot_rbe_robust_results(
     load_dofs = result_list[0].load_dofs
     if any(result.load_dofs != load_dofs for result in result_list[1:]):
         raise ValueError("All robust results must use the same load_dofs.")
+
+    plot_limits = _validate_plot_limits(xlim, ylim)
 
     if labels is None:
         labels = [_result_label(result) for result in result_list]
@@ -544,6 +612,27 @@ def plot_rbe_robust_results(
                 alpha=0.0,
                 label="{} outer".format(label),
             )
+        if not result.is_bounded and plot_limits:
+            x_limits, y_limits = plot_limits
+            if result.method == "sample":
+                clipped_polygon = _clipped_radial_polygon(result, x_limits, y_limits)
+                clipped_label = "{} clipped unbounded inner".format(label)
+                clipped_linestyle = "-"
+                clipped_alpha = 0.18
+            else:
+                clipped_polygon = _clipped_support_polygon(result, x_limits, y_limits)
+                clipped_label = "{} clipped unbounded outer".format(label)
+                clipped_linestyle = "--"
+                clipped_alpha = 0.08
+            if clipped_polygon:
+                _plot_polygon(
+                    axes,
+                    clipped_polygon,
+                    color=color,
+                    linestyle=clipped_linestyle,
+                    alpha=clipped_alpha,
+                    label=clipped_label,
+                )
         if show_points:
             points = result.support_points if result.support_points else result.boundary_points
             if points:
@@ -570,23 +659,36 @@ def plot_rbe_robust_results(
 
     axes.set_xlabel(_load_dof_label(load_dofs[0]))
     axes.set_ylabel(_load_dof_label(load_dofs[1]))
-    axes.set_aspect("equal", adjustable="datalim")
+    if plot_limits:
+        axes.set_xlim(plot_limits[0])
+        axes.set_ylim(plot_limits[1])
+        axes.set_aspect("equal", adjustable="box")
+    else:
+        axes.set_aspect("equal", adjustable="datalim")
     axes.grid(True, alpha=0.3)
     axes.legend()
     return figure, axes
 
 
-def _prepare_problem(assembly, load_dofs, mu, density, external_forces):
-    """Construct ``A``, ``H``, ``p0``, and ``T`` for robust analysis.
+def _prepare_problem(
+    assembly,
+    load_dofs,
+    mu,
+    density,
+    external_forces,
+    load_application_points=None,
+    application_force_bound=None,
+):
+    """Construct ``A``, ``H``, ``h``, ``p0``, and ``P`` for robust analysis.
 
     ``A`` has one six-component equilibrium row block per free body and three
     contact-force columns per interface vertex. ``H`` contains eight
-    linearized friction inequalities and one compression inequality per
-    interface vertex. ``T`` maps the two selected load increments into the
-    equilibrium rows.
+    linearized friction inequalities, one compression inequality per interface
+    vertex, and optional hidden load-application force bounds. ``P`` projects
+    decision variables to the two visible load components.
     """
     normalized_dofs = _validate_load_dofs(assembly, load_dofs)
-    equilibrium = equilibrium_setup(assembly, penalty=False).tocsr()
+    base_equilibrium = equilibrium_setup(assembly, penalty=False).tocsr()
     friction = friction_setup(assembly, mu, penalty=False).tocsr()
     baseline_load = external_force_setup(assembly, density, external_forces).flatten()
 
@@ -599,15 +701,94 @@ def _prepare_problem(assembly, load_dofs, mu, density, external_forces):
         ),
         shape=(vertex_count, force_count),
     )
-    inequalities = vstack([friction, normal_nonnegative], format="csr")
-    load_basis = _load_basis(assembly, normalized_dofs, equilibrium.shape[0])
+    base_inequalities = vstack([friction, normal_nonnegative], format="csr")
+
+    if load_application_points is None:
+        if application_force_bound is not None:
+            raise ValueError("application_force_bound requires load_application_points.")
+        return _center_load_problem(
+            base_equilibrium,
+            base_inequalities,
+            baseline_load,
+            assembly,
+            normalized_dofs,
+        )
+
+    return _application_load_problem(
+        base_equilibrium,
+        base_inequalities,
+        baseline_load,
+        assembly,
+        normalized_dofs,
+        load_application_points,
+        application_force_bound,
+    )
+
+
+def _center_load_problem(base_equilibrium, base_inequalities, baseline_load, assembly, load_dofs):
+    force_count = base_equilibrium.shape[1]
+    load_basis = _load_basis(assembly, load_dofs, base_equilibrium.shape[0])
+    equilibrium = hstack([base_equilibrium, load_basis], format="csr")
+    inequalities = hstack(
+        [base_inequalities, csr_matrix((base_inequalities.shape[0], 2))],
+        format="csr",
+    )
+    load_projection = csr_matrix(
+        (
+            np.ones(2),
+            ([0, 1], [force_count, force_count + 1]),
+        ),
+        shape=(2, force_count + 2),
+    )
 
     return _RobustProblem(
         equilibrium=equilibrium,
         inequalities=inequalities,
+        inequality_rhs=np.zeros(inequalities.shape[0]),
         baseline_load=baseline_load,
-        load_basis=load_basis,
-        load_dofs=normalized_dofs,
+        load_projection=load_projection,
+        load_dofs=load_dofs,
+    )
+
+
+def _application_load_problem(
+    base_equilibrium,
+    base_inequalities,
+    baseline_load,
+    assembly,
+    load_dofs,
+    load_application_points,
+    application_force_bound,
+):
+    load_node, points = _validate_application_points(assembly, load_dofs, load_application_points)
+    bound = _validate_application_force_bound(application_force_bound)
+    application_basis, load_projection = _application_load_basis(
+        assembly,
+        load_dofs,
+        load_node,
+        points,
+        base_equilibrium.shape[0],
+        base_equilibrium.shape[1],
+    )
+    equilibrium = hstack([base_equilibrium, application_basis], format="csr")
+    inequalities = hstack(
+        [base_inequalities, csr_matrix((base_inequalities.shape[0], application_basis.shape[1]))],
+        format="csr",
+    )
+    inequality_rhs = np.zeros(inequalities.shape[0])
+
+    if bound is not None:
+        bound_rows = _application_bound_rows(base_equilibrium.shape[1], application_basis.shape[1], bound)
+        inequalities = vstack([inequalities, bound_rows[0]], format="csr")
+        inequality_rhs = np.concatenate([inequality_rhs, bound_rows[1]])
+
+    return _RobustProblem(
+        equilibrium=equilibrium,
+        inequalities=inequalities,
+        inequality_rhs=inequality_rhs,
+        baseline_load=baseline_load,
+        load_projection=load_projection,
+        load_dofs=load_dofs,
     )
 
 
@@ -632,6 +813,123 @@ def _validate_load_dofs(assembly, load_dofs):
     if normalized[0] == normalized[1]:
         raise ValueError("load_dofs must contain two unique degrees of freedom.")
     return normalized[0], normalized[1]
+
+
+def _validate_application_points(assembly, load_dofs, load_application_points):
+    load_node = load_dofs[0][0]
+    if load_dofs[1][0] != load_node:
+        raise ValueError("load_application_points require both load_dofs on the same node.")
+    if any(component not in _FORCE_COMPONENTS for _, component in load_dofs):
+        raise ValueError("load_application_points currently support only force components.")
+
+    if isinstance(load_application_points, dict):
+        if load_node not in load_application_points:
+            raise ValueError("load_application_points must include the loaded node {!r}.".format(load_node))
+        if any(node != load_node for node in load_application_points):
+            raise ValueError("load_application_points must be supplied only for the loaded node.")
+        raw_points = load_application_points[load_node]
+    else:
+        raw_points = load_application_points
+
+    try:
+        raw_points = list(raw_points)
+    except TypeError as error:
+        raise ValueError("load_application_points must contain point coordinates.") from error
+    if not raw_points:
+        raise ValueError("load_application_points must contain at least one point.")
+
+    points = []
+    for index, point in enumerate(raw_points):
+        points.append(_xyz_array(point, "load_application_points[{}]".format(index)))
+    return load_node, points
+
+
+def _validate_application_force_bound(application_force_bound):
+    if application_force_bound is None:
+        return None
+    if isinstance(application_force_bound, bool):
+        raise ValueError("application_force_bound must be a positive finite number.")
+    bound = float(application_force_bound)
+    if not np.isfinite(bound) or bound <= 0:
+        raise ValueError("application_force_bound must be a positive finite number.")
+    return bound
+
+
+def _application_load_basis(assembly, load_dofs, load_node, points, row_count, base_force_count):
+    node_keys = list(assembly.graph.nodes())
+    node_index = {node: index for index, node in enumerate(node_keys)}
+    free = free_nodes(assembly)
+    free_position = free.index(node_index[load_node])
+    base_row = free_position * 6
+
+    block = assembly.graph.node_attribute(load_node, "block")
+    center = _xyz_array(block.center(), "loaded block center")
+
+    rows = []
+    columns = []
+    data = []
+    projection_rows = []
+    projection_columns = []
+    projection_data = []
+
+    column = 0
+    for point in points:
+        offset = point - center
+        for load_index, (_, component) in enumerate(load_dofs):
+            unit = np.zeros(3)
+            unit[_COMPONENT_INDEX[component]] = 1.0
+            moment = np.cross(offset, unit)
+
+            rows.append(base_row + _COMPONENT_INDEX[component])
+            columns.append(column)
+            data.append(1.0)
+            for moment_index, value in enumerate(moment):
+                if value:
+                    rows.append(base_row + 3 + moment_index)
+                    columns.append(column)
+                    data.append(float(value))
+
+            projection_rows.append(load_index)
+            projection_columns.append(base_force_count + column)
+            projection_data.append(1.0)
+            column += 1
+
+    application_basis = csr_matrix((data, (rows, columns)), shape=(row_count, column))
+    load_projection = csr_matrix(
+        (projection_data, (projection_rows, projection_columns)),
+        shape=(2, base_force_count + column),
+    )
+    return application_basis, load_projection
+
+
+def _application_bound_rows(base_force_count, application_force_count, bound):
+    total_count = base_force_count + application_force_count
+    rows = np.concatenate(
+        [np.arange(application_force_count), np.arange(application_force_count, 2 * application_force_count)]
+    )
+    columns = np.concatenate(
+        [
+            base_force_count + np.arange(application_force_count),
+            base_force_count + np.arange(application_force_count),
+        ]
+    )
+    data = np.concatenate([np.ones(application_force_count), -np.ones(application_force_count)])
+    inequalities = csr_matrix((data, (rows, columns)), shape=(2 * application_force_count, total_count))
+    rhs = np.full(2 * application_force_count, bound)
+    return inequalities, rhs
+
+
+def _xyz_array(point, name):
+    if hasattr(point, "x") and hasattr(point, "y") and hasattr(point, "z"):
+        coordinates = np.asarray([point.x, point.y, point.z], dtype=float)
+    else:
+        try:
+            coordinates = np.asarray(point, dtype=float)
+        except (TypeError, ValueError) as error:
+            raise ValueError("{} must be a finite three-dimensional point.".format(name)) from error
+    if coordinates.shape != (3,) or not np.all(np.isfinite(coordinates)):
+        raise ValueError("{} must be a finite three-dimensional point.".format(name))
+    return coordinates
 
 
 def _load_basis(assembly, load_dofs, row_count):
@@ -691,14 +989,15 @@ def _analyze_load_set(problem, options):
 
 def _is_origin_feasible(problem, options):
     """Return whether the zero unknown-load increment belongs to the load set."""
-    force_count = problem.equilibrium.shape[1]
+    variable_count = problem.equilibrium.shape[1]
+    equality = vstack([problem.equilibrium, problem.load_projection], format="csr")
     result = linprog(
-        np.zeros(force_count),
+        np.zeros(variable_count),
         A_ub=problem.inequalities,
-        b_ub=np.zeros(problem.inequalities.shape[0]),
-        A_eq=problem.equilibrium,
-        b_eq=-problem.baseline_load,
-        bounds=[(None, None)] * force_count,
+        b_ub=problem.inequality_rhs,
+        A_eq=equality,
+        b_eq=np.concatenate([-problem.baseline_load, np.zeros(2)]),
+        bounds=[(None, None)] * variable_count,
         method="highs",
         options=options,
     )
@@ -711,25 +1010,19 @@ def _is_origin_feasible(problem, options):
 
 def _solve_load_set_feasibility(problem, options):
     """Return one feasible ``u`` or raise when the complete safe set is empty."""
-    force_count = problem.equilibrium.shape[1]
-    inequality_rows = problem.inequalities.shape[0]
-    equality = hstack([problem.equilibrium, problem.load_basis], format="csr")
-    inequalities = hstack(
-        [problem.inequalities, csr_matrix((inequality_rows, 2))],
-        format="csr",
-    )
+    variable_count = problem.equilibrium.shape[1]
     result = linprog(
-        np.zeros(force_count + 2),
-        A_ub=inequalities,
-        b_ub=np.zeros(inequality_rows),
-        A_eq=equality,
+        np.zeros(variable_count),
+        A_ub=problem.inequalities,
+        b_ub=problem.inequality_rhs,
+        A_eq=problem.equilibrium,
         b_eq=-problem.baseline_load,
-        bounds=[(None, None)] * (force_count + 2),
+        bounds=[(None, None)] * variable_count,
         method="highs",
         options=options,
     )
     if result.status == 0:
-        return np.asarray(result.x[force_count : force_count + 2], dtype=float)
+        return np.asarray(problem.load_projection.dot(result.x), dtype=float)
     if result.status == 2:
         raise ValueError("The safe load set is empty for compression-only RBE.")
     raise RuntimeError("Safe load-set feasibility solve failed: {}.".format(result.message))
@@ -737,22 +1030,25 @@ def _solve_load_set_feasibility(problem, options):
 
 def _solve_radial(problem, direction, center, options):
     """Maximize distance ``alpha`` from a verified feasible load center."""
-    force_count = problem.equilibrium.shape[1]
-    load_column = problem.load_basis.dot(direction).reshape((-1, 1))
-    equality = hstack([problem.equilibrium, load_column], format="csr")
+    variable_count = problem.equilibrium.shape[1]
+    zero_equilibrium_alpha = csr_matrix((problem.equilibrium.shape[0], 1))
+    load_column = csr_matrix(-np.asarray(direction, dtype=float).reshape((2, 1)))
+    equilibrium_rows = hstack([problem.equilibrium, zero_equilibrium_alpha], format="csr")
+    load_rows = hstack([problem.load_projection, load_column], format="csr")
+    equality = vstack([equilibrium_rows, load_rows], format="csr")
     inequalities = hstack(
         [problem.inequalities, csr_matrix((problem.inequalities.shape[0], 1))],
         format="csr",
     )
-    objective = np.zeros(force_count + 1)
+    objective = np.zeros(variable_count + 1)
     objective[-1] = -1.0
     result = linprog(
         objective,
         A_ub=inequalities,
-        b_ub=np.zeros(inequalities.shape[0]),
+        b_ub=problem.inequality_rhs,
         A_eq=equality,
-        b_eq=-problem.baseline_load - problem.load_basis.dot(center),
-        bounds=[(None, None)] * force_count + [(0, None)],
+        b_eq=np.concatenate([-problem.baseline_load, np.asarray(center, dtype=float)]),
+        bounds=[(None, None)] * variable_count + [(0, None)],
         method="highs",
         options=options,
     )
@@ -765,27 +1061,20 @@ def _solve_radial(problem, direction, center, options):
 
 def _solve_primal_support(problem, direction, options):
     """Solve ``max d^T u`` and return its value and feasible support point."""
-    force_count = problem.equilibrium.shape[1]
-    inequality_rows = problem.inequalities.shape[0]
-    equality = hstack([problem.equilibrium, problem.load_basis], format="csr")
-    inequalities = hstack(
-        [problem.inequalities, csr_matrix((inequality_rows, 2))],
-        format="csr",
-    )
-    objective = np.zeros(force_count + 2)
-    objective[force_count:] = -np.asarray(direction, dtype=float)
+    variable_count = problem.equilibrium.shape[1]
+    objective = -np.asarray(problem.load_projection.transpose().dot(np.asarray(direction, dtype=float))).ravel()
     result = linprog(
         objective,
-        A_ub=inequalities,
-        b_ub=np.zeros(inequality_rows),
-        A_eq=equality,
+        A_ub=problem.inequalities,
+        b_ub=problem.inequality_rhs,
+        A_eq=problem.equilibrium,
         b_eq=-problem.baseline_load,
-        bounds=[(None, None)] * (force_count + 2),
+        bounds=[(None, None)] * variable_count,
         method="highs",
         options=options,
     )
     if result.status == 0:
-        point = np.asarray(result.x[force_count : force_count + 2], dtype=float)
+        point = np.asarray(problem.load_projection.dot(result.x), dtype=float)
         support = float(np.asarray(direction, dtype=float).dot(point))
         return "optimal", support, point.tolist()
     if result.status == 3:
@@ -797,16 +1086,9 @@ def _solve_dual_support(problem, direction, options):
     """Solve the dual support LP for one direction ``d``."""
     equilibrium_rows = problem.equilibrium.shape[0]
     inequality_rows = problem.inequalities.shape[0]
-    zero_load_inequality = csr_matrix((2, inequality_rows))
-    dual_equalities = bmat(
-        [
-            [problem.equilibrium.transpose(), problem.inequalities.transpose()],
-            [problem.load_basis.transpose(), zero_load_inequality],
-        ],
-        format="csr",
-    )
-    right_hand_side = np.concatenate([np.zeros(problem.equilibrium.shape[1]), direction])
-    objective = np.concatenate([-problem.baseline_load, np.zeros(inequality_rows)])
+    dual_equalities = hstack([problem.equilibrium.transpose(), problem.inequalities.transpose()], format="csr")
+    right_hand_side = np.asarray(problem.load_projection.transpose().dot(np.asarray(direction, dtype=float))).ravel()
+    objective = np.concatenate([-problem.baseline_load, problem.inequality_rhs])
     result = linprog(
         objective,
         A_eq=dual_equalities,
@@ -856,6 +1138,77 @@ def _outer_polygon(halfspaces, tolerance):
     center = np.mean(np.asarray(unique_points), axis=0)
     polygon = sorted(unique_points, key=lambda point: math.atan2(point[1] - center[1], point[0] - center[0]))
     return _counterclockwise_polygon(polygon, tolerance)
+
+
+def _validate_plot_limits(xlim, ylim):
+    if xlim is None and ylim is None:
+        return None
+    if xlim is None or ylim is None:
+        raise ValueError("xlim and ylim must be provided together.")
+
+    normalized = []
+    for name, limits in (("xlim", xlim), ("ylim", ylim)):
+        if len(limits) != 2:
+            raise ValueError("{} must contain exactly two values.".format(name))
+        lower, upper = (float(value) for value in limits)
+        if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+            raise ValueError("{} must contain two finite increasing values.".format(name))
+        normalized.append((lower, upper))
+    return normalized[0], normalized[1]
+
+
+def _clipped_radial_polygon(result, xlim, ylim, tolerance=1e-9):
+    center = np.asarray(result.feasible_center, dtype=float)
+    points = []
+    for direction, status, limit in zip(result.directions, result.statuses, result.radial_limits):
+        maximum = math.inf if status == "unbounded" else limit
+        if maximum is None:
+            continue
+        points.extend(
+            _clip_ray_to_box(
+                center,
+                np.asarray(direction, dtype=float),
+                maximum,
+                xlim,
+                ylim,
+                tolerance,
+            )
+        )
+    return _inner_polygon(points, tolerance)
+
+
+def _clip_ray_to_box(origin, direction, maximum, xlim, ylim, tolerance):
+    lower = 0.0
+    upper = maximum
+    for coordinate, delta, limits in zip(origin, direction, (xlim, ylim)):
+        if abs(delta) <= tolerance:
+            if coordinate < limits[0] - tolerance or coordinate > limits[1] + tolerance:
+                return []
+            continue
+        intersections = sorted(((limits[0] - coordinate) / delta, (limits[1] - coordinate) / delta))
+        lower = max(lower, intersections[0])
+        upper = min(upper, intersections[1])
+        if upper < lower - tolerance:
+            return []
+
+    start = origin + max(0.0, lower) * direction
+    end = origin + upper * direction
+    if np.linalg.norm(end - start) <= tolerance:
+        return [start.tolist()]
+    return [start.tolist(), end.tolist()]
+
+
+def _clipped_support_polygon(result, xlim, ylim, tolerance=1e-9):
+    halfspaces = list(result.halfspaces)
+    halfspaces.extend(
+        [
+            [1.0, 0.0, xlim[1]],
+            [-1.0, 0.0, -xlim[0]],
+            [0.0, 1.0, ylim[1]],
+            [0.0, -1.0, -ylim[0]],
+        ]
+    )
+    return _outer_polygon(halfspaces, tolerance)
 
 
 def _deduplicate_points(points, tolerance):

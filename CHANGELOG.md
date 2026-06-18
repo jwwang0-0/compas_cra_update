@@ -10,11 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 * Add robust RBE radial sampling, primal and dual support-function analyses, and optional Matplotlib visualization for two-dimensional safe load ranges.
+* Add a three-block robust RBE example comparing radial, primal-support, and dual-support safe-load approximations.
+* Add a robust RBE arch-construction example showing stage-by-stage safe-load regions.
 
 ### Changed
 
 * Fix Pyomo force-objective weighting for three- and four-component contact force layouts.
 * Allow robust RBE analyses to use shifted feasible load regions that do not contain the load-increment origin.
+* Allow robust RBE analyses to project visible loads from bounded hidden point forces at candidate application points.
+* Allow robust RBE plots to clip unbounded regions to explicit visualization limits.
+* Extend the robust RBE arch-construction example to save thickness-specific SVG plots with zoomed stage views.
 
 ### Removed
 
