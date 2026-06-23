@@ -11,7 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * Add robust RBE radial sampling, primal and dual support-function analyses, and optional Matplotlib visualization for two-dimensional safe load ranges.
 * Add a three-block robust RBE example comparing radial, primal-support, and dual-support safe-load approximations.
+* Add a three-block RBE disturbance-uncertainty example comparing block-1 disturbance levels.
 * Add a robust RBE arch-construction example showing stage-by-stage safe-load regions.
+* Add a four-block arch disturbance-uncertainty example comparing block-1 and block-2 disturbance levels.
+* Add robust RBE safe-load analysis for polyhedral external-load uncertainty.
 
 ### Changed
 

@@ -19,6 +19,11 @@ Solvers
     rbe_robust_support
     rbe_robust_support_primal
     rbe_robust_support_dual
+    rbe_uncertainty_disturb
+    rbe_uncertainty_disturb_sample
+    rbe_uncertainty_disturb_support
+    rbe_uncertainty_disturb_support_primal
+    rbe_uncertainty_disturb_support_dual
     plot_rbe_robust_results
     RobustForceResult
 
