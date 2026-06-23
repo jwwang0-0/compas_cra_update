@@ -16,5 +16,9 @@ available.
 The plot uses fixed viewport limits for comparison. These viewport limits are
 only for visualization and are not physical load constraints.
 
+The dual support result also reports the governing visible boundary equations
+``a Fx + b Fz <= c`` and labels the equations that intersect the displayed
+viewport.
+
 .. literalinclude:: 18_rbe_robust_3block.py
     :language: python

@@ -148,13 +148,140 @@ def rightmost_side_vertices(block):
     return max(face_coordinates, key=lambda coordinates: sum(point[0] for point in coordinates) / len(coordinates))
 
 
+def line_value(line, point):
+    """Evaluate one support line at a visible load point."""
+    _, a, b, c = line
+    return a * point[0] + b * point[1] - c
+
+
+def edge_line_tolerance(line, first, second, relative_tolerance=1e-6):
+    """Return a scale-aware tolerance for matching a polygon edge to a support line."""
+    _, a, b, c = line
+    scale = max(
+        1.0,
+        abs(c),
+        abs(a * first[0] + b * first[1]),
+        abs(a * second[0] + b * second[1]),
+    )
+    return relative_tolerance * scale
+
+
+def governing_boundary_lines(result):
+    """Return support halfspaces that form edges of the outer polygon."""
+    polygon = result.outer_polygon
+    if len(polygon) < 2:
+        return []
+
+    governing = []
+    used_halfspace_indices = set()
+    halfspaces = [
+        (index, halfspace[0], halfspace[1], halfspace[2]) for index, halfspace in enumerate(result.halfspaces)
+    ]
+    for index, first in enumerate(polygon):
+        second = polygon[(index + 1) % len(polygon)]
+        for line in halfspaces:
+            tolerance = edge_line_tolerance(line, first, second)
+            if abs(line_value(line, first)) <= tolerance and abs(line_value(line, second)) <= tolerance:
+                if line[0] not in used_halfspace_indices:
+                    label = "L{}".format(len(governing) + 1)
+                    governing.append(
+                        {
+                            "label": label,
+                            "halfspace_index": line[0],
+                            "a": line[1],
+                            "b": line[2],
+                            "c": line[3],
+                        }
+                    )
+                    used_halfspace_indices.add(line[0])
+                break
+    return governing
+
+
+def format_float(value):
+    """Format one coefficient for compact equation reporting."""
+    if abs(value) < 5e-12:
+        value = 0.0
+    return "{:.6g}".format(value)
+
+
+def format_boundary_equation(boundary):
+    """Format one visible load-space boundary equation."""
+    return "{}: {} Fx + {} Fz <= {}".format(
+        boundary["label"],
+        format_float(boundary["a"]),
+        format_float(boundary["b"]),
+        format_float(boundary["c"]),
+    )
+
+
+def line_box_segment(boundary, xlim, ylim, tolerance=1e-9):
+    """Return the visible segment of one line clipped to a rectangular viewport."""
+    a = boundary["a"]
+    b = boundary["b"]
+    c = boundary["c"]
+    points = []
+
+    if abs(b) > tolerance:
+        for x in xlim:
+            z = (c - a * x) / b
+            if ylim[0] - tolerance <= z <= ylim[1] + tolerance:
+                points.append((x, z))
+    if abs(a) > tolerance:
+        for z in ylim:
+            x = (c - b * z) / a
+            if xlim[0] - tolerance <= x <= xlim[1] + tolerance:
+                points.append((x, z))
+
+    unique = []
+    for point in points:
+        if not any(
+            abs(point[0] - existing[0]) <= tolerance and abs(point[1] - existing[1]) <= tolerance
+            for existing in unique
+        ):
+            unique.append(point)
+    if len(unique) < 2:
+        return None
+    return unique[0], unique[1]
+
+
+def annotate_boundary_lines(axes, boundaries, xlim, ylim):
+    """Draw labels for boundary lines visible inside the plot viewport."""
+    visible_count = 0
+    for boundary in boundaries:
+        segment = line_box_segment(boundary, xlim, ylim)
+        if segment is None:
+            continue
+        (x0, z0), (x1, z1) = segment
+        axes.plot([x0, x1], [z0, z1], color="black", linewidth=1.2, alpha=0.75)
+        axes.text(
+            0.5 * (x0 + x1),
+            0.5 * (z0 + z1),
+            boundary["label"],
+            fontsize=8,
+            color="black",
+            ha="center",
+            va="center",
+            bbox={"boxstyle": "round,pad=0.15", "facecolor": "white", "edgecolor": "black", "alpha": 0.75},
+        )
+        visible_count += 1
+    return visible_count
+
+
+def print_boundary_equations(boundaries):
+    """Print all governing visible load-space boundary equations."""
+    print("governing visible boundary equations:")
+    for boundary in boundaries:
+        print("  {}".format(format_boundary_equation(boundary)))
+
+
 if __name__ == "__main__":
     geometry = Arch(
         b0_width=0.5,
         b1_height=0.5,
         b1_base=0.5,
-        b2_base=0.4,
-        b2_top=0.7,
+        b2_base=0.6,
+        b2_top=0.9,
         alpha=math.pi / 2,
         beta=2 * math.pi / 3,
         gamma=2 * math.pi / 3,
@@ -182,14 +309,42 @@ if __name__ == "__main__":
     report_result("primal support", primal)
     report_result("dual support", dual)
     print("hidden hand-force component bound: 1000000.0 (placeholder)")
+    boundaries = governing_boundary_lines(dual)
+    print_boundary_equations(boundaries)
 
+    xlim = (-1.0, 0.1)
+    ylim = (-0.5, 1.0)
     figure, axes = plot_rbe_robust_results(
         [radial, primal, dual],
         labels=["radial", "primal", "dual"],
-        xlim=(-1.0, 0.1),
-        ylim=(-0.5, 1.0),
+        xlim=xlim,
+        ylim=ylim,
     )
     figure.set_size_inches(10, 6)
+    # visible_boundary_count = annotate_boundary_lines(axes, boundaries, xlim, ylim)
+    # if visible_boundary_count < len(boundaries):
+    #     axes.text(
+    #         0.02,
+    #         0.02,
+    #         "Some governing lines are outside this viewport; see console table.",
+    #         transform=axes.transAxes,
+    #         fontsize=8,
+    #         va="bottom",
+    #         bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "0.7", "alpha": 0.85},
+    #     )
+    # if visible_boundary_count:
+    #     equation_text = "\n".join(
+    #         format_boundary_equation(boundary) for boundary in boundaries if line_box_segment(boundary, xlim, ylim)
+    #     )
+    #     axes.text(
+    #         1.02,
+    #         0.45,
+    #         equation_text,
+    #         transform=axes.transAxes,
+    #         fontsize=8,
+    #         va="top",
+    #         family="monospace",
+    #     )
     axes.set_xlabel("Block 2 load Fx")
     axes.set_ylabel("Block 2 load Fz")
     axes.set_title("Three-block robust RBE safe-load regions with four-point grasp")

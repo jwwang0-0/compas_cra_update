@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Allow robust RBE analyses to use shifted feasible load regions that do not contain the load-increment origin.
 * Allow robust RBE analyses to project visible loads from bounded hidden point forces at candidate application points.
 * Allow robust RBE plots to clip unbounded regions to explicit visualization limits.
+* Extend the three-block robust RBE example to print and annotate governing visible boundary equations.
 * Extend the robust RBE arch-construction example to save thickness-specific SVG plots with zoomed stage views.
 
 ### Removed
