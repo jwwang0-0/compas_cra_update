@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import pytest
 from compas.datastructures import Mesh
@@ -17,6 +19,9 @@ from compas_cra.equilibrium import rbe_uncertainty_disturb_support
 from compas_cra.equilibrium import rbe_uncertainty_disturb_support_dual
 from compas_cra.equilibrium import rbe_uncertainty_disturb_support_primal
 from compas_cra.equilibrium.rbe_robust import _prepare_problem
+from compas_cra.equilibrium.rbe_uncertainty_disturb import _scenario_loads
+from compas_cra.equilibrium.rbe_uncertainty_disturb import _tilted_gravity_load
+from compas_cra.equilibrium.rbe_uncertainty_disturb import _tilted_gravity_vector
 from compas_cra.equilibrium.rbe_uncertainty_disturb import _uncertainty_shifts
 
 
@@ -56,6 +61,11 @@ def four_grasp_points(assembly, node):
         point_from_offset(assembly, node, [0.5, -0.5, -0.5]),
         point_from_offset(assembly, node, [0.5, 0.5, -0.5]),
     ]
+
+
+def tilted_external_force(theta):
+    """Return the external force shift that converts vertical gravity to tilted gravity."""
+    return {1: [-math.sin(theta), 0.0, 1.0 - math.cos(theta), 0.0, 0.0, 0.0]}
 
 
 def test_zero_uncertainty_matches_existing_robust_solvers():
@@ -212,3 +222,149 @@ def test_four_point_hidden_application_works_with_uncertainty():
     assert primal.is_bounded
     assert dual.is_bounded
     assert primal.support_values == pytest.approx(dual.support_values)
+
+
+def test_zero_tilt_gravity_load_matches_existing_baseline():
+    assembly = two_block_assembly()
+    problem = _prepare_problem(assembly, [(1, "fx"), (1, "fy")], 0.84, 1.0, None)
+
+    assert _tilted_gravity_vector(0.0) == pytest.approx([0.0, 0.0, -1.0])
+    assert _tilted_gravity_load(assembly, 1.0, None, 0.0, problem.equilibrium.shape[0]) == pytest.approx(
+        problem.baseline_load
+    )
+
+
+def test_small_tilt_matches_linearized_load_uncertainty():
+    assembly = two_block_assembly()
+    angle = 1e-5
+    row_count = _prepare_problem(assembly, [(1, "fx"), (1, "fy")], 0.84, 1.0, None).equilibrium.shape[0]
+    linearized_basis = csr_matrix(([-1.0], ([0], [0])), shape=(row_count, 1))
+
+    tilt = rbe_uncertainty_disturb_support_dual(
+        assembly,
+        [(1, "fx"), (1, "fy")],
+        density=1,
+        tilt_angle_bounds=(-angle, angle),
+        num_directions=8,
+    )
+    linearized = rbe_uncertainty_disturb_support_dual(
+        assembly,
+        [(1, "fx"), (1, "fy")],
+        density=1,
+        uncertainty_vertices=[[-angle], [angle]],
+        uncertainty_basis=linearized_basis,
+        num_directions=8,
+    )
+
+    assert tilt.support_values == pytest.approx(linearized.support_values, abs=1e-7)
+
+
+def test_tilt_support_matches_intersection_of_manual_tilt_scenarios():
+    assembly = two_block_assembly()
+    angle = math.radians(3)
+    angles = [-angle, 0.0, angle]
+    tilt = rbe_uncertainty_disturb_support_dual(
+        assembly,
+        [(1, "fx"), (1, "fy")],
+        density=1,
+        tilt_angle_bounds=(-angle, angle),
+        tilt_angle_count=3,
+        num_directions=8,
+    )
+    manual_results = [
+        rbe_robust_support_dual(
+            assembly,
+            [(1, "fx"), (1, "fy")],
+            density=1,
+            external_forces=tilted_external_force(theta),
+            num_directions=8,
+        )
+        for theta in angles
+    ]
+    expected = np.min(np.asarray([result.support_values for result in manual_results]), axis=0)
+
+    assert tilt.support_values == pytest.approx(expected)
+
+
+def test_combined_tilt_and_load_uncertainty_uses_cartesian_product_and_is_conservative():
+    assembly = two_block_assembly()
+    problem = _prepare_problem(assembly, [(1, "fx"), (1, "fy")], 0.84, 1.0, None)
+    angle = math.radians(2)
+    scenario_loads = _scenario_loads(
+        problem,
+        assembly=assembly,
+        density=1,
+        external_forces=None,
+        uncertainty_load_dofs=[(1, "fx")],
+        uncertainty_vertices=[[-0.05], [0.05]],
+        uncertainty_basis=None,
+        tilt_angle_bounds=(-angle, angle),
+        tilt_angle_count=3,
+    )
+
+    load_only = rbe_uncertainty_disturb_support_dual(
+        assembly,
+        [(1, "fx"), (1, "fy")],
+        density=1,
+        uncertainty_vertices=[[-0.05], [0.05]],
+        uncertainty_load_dofs=[(1, "fx")],
+        num_directions=8,
+    )
+    tilt_only = rbe_uncertainty_disturb_support_dual(
+        assembly,
+        [(1, "fx"), (1, "fy")],
+        density=1,
+        tilt_angle_bounds=(-angle, angle),
+        tilt_angle_count=3,
+        num_directions=8,
+    )
+    combined = rbe_uncertainty_disturb_support_dual(
+        assembly,
+        [(1, "fx"), (1, "fy")],
+        density=1,
+        uncertainty_vertices=[[-0.05], [0.05]],
+        uncertainty_load_dofs=[(1, "fx")],
+        tilt_angle_bounds=(-angle, angle),
+        tilt_angle_count=3,
+        num_directions=8,
+    )
+
+    assert len(scenario_loads) == 6
+    assert np.all(np.asarray(combined.support_values) <= np.asarray(load_only.support_values) + 1e-8)
+    assert np.all(np.asarray(combined.support_values) <= np.asarray(tilt_only.support_values) + 1e-8)
+
+
+def test_tilt_primal_and_dual_support_formulations_match():
+    assembly = two_block_assembly()
+    kwargs = {
+        "density": 1,
+        "tilt_angle_bounds": (-math.radians(2), math.radians(2)),
+        "tilt_angle_count": 3,
+        "num_directions": 8,
+    }
+    primal = rbe_uncertainty_disturb_support_primal(assembly, [(1, "fx"), (1, "fy")], **kwargs)
+    dual = rbe_uncertainty_disturb_support_dual(assembly, [(1, "fx"), (1, "fy")], **kwargs)
+
+    assert primal.support_values == pytest.approx(dual.support_values)
+
+
+@pytest.mark.parametrize(
+    "tilt_angle_bounds, tilt_angle_count, message",
+    [
+        ((0.0, 0.0), 2, "finite increasing"),
+        ((0.1, -0.1), 2, "finite increasing"),
+        ((0.0,), 2, "exactly two"),
+        ((0.0, 0.1), 1, "greater than or equal to 2"),
+        ((0.0, 0.1), 2.5, "integer"),
+    ],
+)
+def test_invalid_tilt_inputs_raise(tilt_angle_bounds, tilt_angle_count, message):
+    with pytest.raises(ValueError, match=message):
+        rbe_uncertainty_disturb_support_dual(
+            two_block_assembly(),
+            [(1, "fx"), (1, "fy")],
+            density=1,
+            tilt_angle_bounds=tilt_angle_bounds,
+            tilt_angle_count=tilt_angle_count,
+            num_directions=4,
+        )
