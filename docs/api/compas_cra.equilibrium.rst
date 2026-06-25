@@ -24,6 +24,12 @@ Solvers
     rbe_uncertainty_disturb_support
     rbe_uncertainty_disturb_support_primal
     rbe_uncertainty_disturb_support_dual
+    rbe_uncertainty_geometry
+    rbe_uncertainty_geometry_sample
+    rbe_uncertainty_geometry_support
+    rbe_uncertainty_geometry_support_primal
+    rbe_uncertainty_geometry_support_dual
+    GeometryScenarioProblem
     plot_rbe_robust_results
     RobustForceResult
 

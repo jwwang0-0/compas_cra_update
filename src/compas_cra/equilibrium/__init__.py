@@ -12,6 +12,12 @@ from .rbe_uncertainty_disturb import rbe_uncertainty_disturb_sample
 from .rbe_uncertainty_disturb import rbe_uncertainty_disturb_support
 from .rbe_uncertainty_disturb import rbe_uncertainty_disturb_support_dual
 from .rbe_uncertainty_disturb import rbe_uncertainty_disturb_support_primal
+from .rbe_uncertainty_geometry import GeometryScenarioProblem
+from .rbe_uncertainty_geometry import rbe_uncertainty_geometry
+from .rbe_uncertainty_geometry import rbe_uncertainty_geometry_sample
+from .rbe_uncertainty_geometry import rbe_uncertainty_geometry_support
+from .rbe_uncertainty_geometry import rbe_uncertainty_geometry_support_dual
+from .rbe_uncertainty_geometry import rbe_uncertainty_geometry_support_primal
 from .cra_helper import (
     equilibrium_setup,
     friction_setup,
@@ -47,6 +53,12 @@ __all__ = [
     "rbe_uncertainty_disturb_support",
     "rbe_uncertainty_disturb_support_primal",
     "rbe_uncertainty_disturb_support_dual",
+    "rbe_uncertainty_geometry",
+    "rbe_uncertainty_geometry_sample",
+    "rbe_uncertainty_geometry_support",
+    "rbe_uncertainty_geometry_support_primal",
+    "rbe_uncertainty_geometry_support_dual",
+    "GeometryScenarioProblem",
     "plot_rbe_robust_results",
     "RobustForceResult",
     "equilibrium_setup",

@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Add a four-block arch disturbance-uncertainty example comparing block-1 and block-2 disturbance levels.
 * Add robust RBE safe-load analysis for polyhedral external-load uncertainty.
 * Add robust RBE foundation-tilt uncertainty analysis and a four-block arch tilt example.
+* Add finite-scenario RBE geometry-uncertainty safe-load analysis and a three-block comparison example.
 
 ### Changed
 
