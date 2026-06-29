@@ -60,7 +60,7 @@ def friction_setup(assembly, mu, penalty=False, friction_net=False, verbose=Fals
     return afr
 
 
-def external_force_setup(assembly, density, external_forces: dict | None = None):
+def external_force_setup(assembly, density, external_forces: dict | None = None, verbose=False):
     """Set up external force vector.
 
     Parameters
@@ -92,7 +92,8 @@ def external_force_setup(assembly, density, external_forces: dict | None = None)
         # if verbose:
         #     print((block.attributes["density"] if "density" in block.attributes else density))
         if node in external_forces:
-            print(f"adding external forces to node {node}")
+            if verbose:
+                print(f"adding external forces to node {node}")
             for i in range(6):
                 p[index][i] = p[index][i] + external_forces[node][i]
             print(f"new forces is p{p[index]}")
