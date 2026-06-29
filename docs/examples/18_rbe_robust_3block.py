@@ -15,8 +15,12 @@ from compas_cra.equilibrium import rbe_robust_sample
 from compas_cra.equilibrium import rbe_robust_support_dual
 from compas_cra.equilibrium import rbe_robust_support_primal
 
-SHOW_BOUNDARY_LINES = True
+PLOT_METHODS = ("primal",)
+# PLOT_METHODS = ("radial", "primal", "dual")
+BOUNDARY_METHOD = "dual"
+SHOW_BOUNDARY_LINES = PLOT_METHODS != ("radial",)
 PRINT_BOUNDARY_EQUATIONS = True
+AUTO_LIMITS_FOR_RADIAL_ONLY = True
 XLIM = (-1.0, 0.1)
 YLIM = (-0.5, 1.0)
 
@@ -164,6 +168,38 @@ def build_assembly(geometry, block_nodes, support_nodes):
     return assembly
 
 
+def concatenate_blocks(blocks):
+    """Build one compound block by concatenating mesh vertices and faces."""
+    vertices = []
+    faces = []
+    for block in blocks:
+        key_to_index = {}
+        for vertex in block.vertices():
+            key_to_index[vertex] = len(vertices)
+            vertices.append(block.vertex_coordinates(vertex))
+        for face in block.faces():
+            faces.append([key_to_index[vertex] for vertex in block.face_vertices(face)])
+    return Mesh.from_vertices_and_faces(vertices, faces).copy(cls=Block)
+
+
+def build_compound_b1_b2_assembly(geometry):
+    """Build an assembly with block 0 fixed and b1+b2 as one rigid block."""
+    blocks = geometry.blocks()
+    assembly = CRA_Assembly()
+    assembly.add_block(blocks[0].copy(cls=Block), node=0)
+    assembly.add_block(concatenate_blocks([blocks[1].copy(cls=Block), blocks[2].copy(cls=Block)]), node=2)
+    assembly.set_boundary_conditions([0])
+    assembly_interfaces_numpy(assembly)
+
+    edges = list(assembly.graph.edges(False))
+    if edges != [(0, 2)]:
+        raise RuntimeError("Compound b1+b2 assembly must contain only the b0-(b1+b2) interface.")
+    interfaces = assembly.graph.edge_attribute((0, 2), "interfaces") or []
+    if not interfaces:
+        raise RuntimeError("Compound b1+b2 assembly did not find a b0-(b1+b2) interface.")
+    return assembly
+
+
 def robust_case_results(assembly, load_node, options):
     """Run radial, primal support, and dual support analyses for one case."""
     load_dofs = [(load_node, "fx"), (load_node, "fz")]
@@ -176,6 +212,33 @@ def robust_case_results(assembly, load_node, options):
     primal = rbe_robust_support_primal(assembly, load_dofs, **solver_options)
     dual = rbe_robust_support_dual(assembly, load_dofs, **solver_options)
     return radial, primal, dual
+
+
+def result_by_method(results):
+    """Return robust results keyed by method name."""
+    radial, primal, dual = results
+    return {
+        "radial": radial,
+        "primal": primal,
+        "dual": dual,
+    }
+
+
+def selected_plot_results(results):
+    """Return the robust results and labels selected by ``PLOT_METHODS``."""
+    by_method = result_by_method(results)
+    unknown = [method for method in PLOT_METHODS if method not in by_method]
+    if unknown:
+        raise ValueError("Unknown plot method(s): {}".format(", ".join(unknown)))
+    return tuple(by_method[method] for method in PLOT_METHODS), list(PLOT_METHODS)
+
+
+def boundary_source_result(results):
+    """Return the result used for boundary-line extraction."""
+    by_method = result_by_method(results)
+    if BOUNDARY_METHOD not in by_method:
+        raise ValueError("Unknown boundary method: {}".format(BOUNDARY_METHOD))
+    return by_method[BOUNDARY_METHOD]
 
 
 def print_case_report(label, results, boundaries):
@@ -398,14 +461,18 @@ def print_boundary_equations(label, boundaries):
 
 def plot_case(axes, results, boundaries, title, xlim, ylim):
     """Plot one boundary-condition case on an existing axes."""
+    plot_results, plot_labels = selected_plot_results(results)
+    use_auto_limits = AUTO_LIMITS_FOR_RADIAL_ONLY and PLOT_METHODS == ("radial",)
+    plot_xlim = None if use_auto_limits else xlim
+    plot_ylim = None if use_auto_limits else ylim
     plot_rbe_robust_results(
-        results,
-        labels=["radial", "primal", "dual"],
+        plot_results,
+        labels=plot_labels,
         ax=axes,
-        xlim=xlim,
-        ylim=ylim,
+        xlim=plot_xlim,
+        ylim=plot_ylim,
     )
-    if SHOW_BOUNDARY_LINES:
+    if SHOW_BOUNDARY_LINES and plot_xlim is not None and plot_ylim is not None:
         visible_boundary_count = annotate_boundary_lines(axes, boundaries, xlim, ylim)
         if visible_boundary_count < len(boundaries):
             axes.text(
@@ -429,6 +496,16 @@ def plot_case(axes, results, boundaries, title, xlim, ylim):
                 family="monospace",
                 bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "0.7", "alpha": 0.85},
             )
+    if use_auto_limits:
+        axes.text(
+            0.02,
+            0.02,
+            "Auto-scaled radial view;\nset AUTO_LIMITS_FOR_RADIAL_ONLY=False to use XLIM/YLIM.",
+            transform=axes.transAxes,
+            fontsize=7,
+            va="bottom",
+            bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "0.7", "alpha": 0.85},
+        )
     axes.set_xlabel("Block 2 load Fx")
     axes.set_ylabel("Block 2 load Fz")
     axes.set_title(title)
@@ -458,16 +535,22 @@ if __name__ == "__main__":
 
     b1_fixed_assembly = build_assembly(geometry, block_nodes=[1, 2], support_nodes=[1])
     b1_fixed_results = robust_case_results(b1_fixed_assembly, load_node=2, options=options)
-    b1_fixed_boundaries = governing_boundary_lines(b1_fixed_results[2])
+    b1_fixed_boundaries = governing_boundary_lines(boundary_source_result(b1_fixed_results))
     print_case_report("b1 fixed / block 0 removed", b1_fixed_results, b1_fixed_boundaries)
 
     b0_fixed_assembly = build_assembly(geometry, block_nodes=[0, 1, 2], support_nodes=[0])
     b0_fixed_results = robust_case_results(b0_fixed_assembly, load_node=2, options=options)
-    b0_fixed_boundaries = governing_boundary_lines(b0_fixed_results[2])
+    b0_fixed_boundaries = governing_boundary_lines(boundary_source_result(b0_fixed_results))
     print_case_report("b0 fixed / full assembly", b0_fixed_results, b0_fixed_boundaries)
 
-    figure, axes = plt.subplots(1, 2, sharex=True, sharey=True)
-    figure.set_size_inches(14, 6)
+    compound_assembly = build_compound_b1_b2_assembly(geometry)
+    compound_results = robust_case_results(compound_assembly, load_node=2, options=options)
+    compound_boundaries = governing_boundary_lines(boundary_source_result(compound_results))
+    print_case_report("b0 fixed / b1+b2 rigid compound", compound_results, compound_boundaries)
+
+    share_axes = not (AUTO_LIMITS_FOR_RADIAL_ONLY and PLOT_METHODS == ("radial",))
+    figure, axes = plt.subplots(1, 3, sharex=share_axes, sharey=share_axes)
+    figure.set_size_inches(18, 6)
     plot_case(
         axes[0],
         b1_fixed_results,
@@ -481,6 +564,14 @@ if __name__ == "__main__":
         b0_fixed_results,
         b0_fixed_boundaries,
         "Block 0 fixed, full three-block assembly",
+        XLIM,
+        YLIM,
+    )
+    plot_case(
+        axes[2],
+        compound_results,
+        compound_boundaries,
+        "Block 0 fixed, b1+b2 rigid compound",
         XLIM,
         YLIM,
     )
