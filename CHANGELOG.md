@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Add robust RBE safe-load analysis for polyhedral external-load uncertainty.
 * Add robust RBE foundation-tilt uncertainty analysis and a four-block arch tilt example.
 * Add finite-scenario RBE geometry-uncertainty safe-load analysis and a three-block comparison example.
+* Add full-arch robust RBE boundary failure-mode and discretization comparison examples.
 
 ### Changed
 
