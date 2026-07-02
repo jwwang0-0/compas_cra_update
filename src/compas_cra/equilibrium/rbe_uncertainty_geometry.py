@@ -13,6 +13,10 @@ load, and visible-load projection matrices:
 This implementation enumerates geometry scenarios and therefore remains a
 linear program for the linearized RBE friction cone. Continuous nonlinear
 geometry uncertainty is intentionally out of scope.
+
+Generated ``point_offset_bounds`` scenarios sample independent local in-plane
+offsets for every interface point with zero normal offset. Generated
+``normal_tilt_bounds`` scenarios sample independent frame tilts per interface.
 """
 
 import copy
@@ -67,6 +71,12 @@ def rbe_uncertainty_geometry_sample(
     interface_scale_factors: Optional[Sequence[float]] = None,
     point_offset_vectors: Optional[Sequence[Sequence[float]]] = None,
     normal_tilt_vectors: Optional[Sequence[Sequence[float]]] = None,
+    point_offset_bounds: Optional[Sequence[float]] = None,
+    point_offset_sample_count: int = 60,
+    point_offset_seed: Optional[int] = 0,
+    normal_tilt_bounds: Optional[Sequence[float]] = None,
+    normal_tilt_sample_count: int = 60,
+    normal_tilt_seed: Optional[int] = 1,
     contact_failure_scenarios: Optional[Sequence[Any]] = None,
     geometry_scenarios: Optional[Sequence[GeometryScenarioProblem]] = None,
     num_directions: int = 36,
@@ -87,7 +97,13 @@ def rbe_uncertainty_geometry_sample(
         application_force_bound=application_force_bound,
         interface_scale_factors=interface_scale_factors,
         point_offset_vectors=point_offset_vectors,
+        point_offset_bounds=point_offset_bounds,
+        point_offset_sample_count=point_offset_sample_count,
+        point_offset_seed=point_offset_seed,
         normal_tilt_vectors=normal_tilt_vectors,
+        normal_tilt_bounds=normal_tilt_bounds,
+        normal_tilt_sample_count=normal_tilt_sample_count,
+        normal_tilt_seed=normal_tilt_seed,
         contact_failure_scenarios=contact_failure_scenarios,
         geometry_scenarios=geometry_scenarios,
     )
@@ -135,6 +151,12 @@ def rbe_uncertainty_geometry_support_primal(
     interface_scale_factors: Optional[Sequence[float]] = None,
     point_offset_vectors: Optional[Sequence[Sequence[float]]] = None,
     normal_tilt_vectors: Optional[Sequence[Sequence[float]]] = None,
+    point_offset_bounds: Optional[Sequence[float]] = None,
+    point_offset_sample_count: int = 60,
+    point_offset_seed: Optional[int] = 0,
+    normal_tilt_bounds: Optional[Sequence[float]] = None,
+    normal_tilt_sample_count: int = 60,
+    normal_tilt_seed: Optional[int] = 1,
     contact_failure_scenarios: Optional[Sequence[Any]] = None,
     geometry_scenarios: Optional[Sequence[GeometryScenarioProblem]] = None,
     num_directions: int = 36,
@@ -155,7 +177,13 @@ def rbe_uncertainty_geometry_support_primal(
         application_force_bound=application_force_bound,
         interface_scale_factors=interface_scale_factors,
         point_offset_vectors=point_offset_vectors,
+        point_offset_bounds=point_offset_bounds,
+        point_offset_sample_count=point_offset_sample_count,
+        point_offset_seed=point_offset_seed,
         normal_tilt_vectors=normal_tilt_vectors,
+        normal_tilt_bounds=normal_tilt_bounds,
+        normal_tilt_sample_count=normal_tilt_sample_count,
+        normal_tilt_seed=normal_tilt_seed,
         contact_failure_scenarios=contact_failure_scenarios,
         geometry_scenarios=geometry_scenarios,
     )
@@ -210,6 +238,12 @@ def rbe_uncertainty_geometry_support_dual(
     interface_scale_factors: Optional[Sequence[float]] = None,
     point_offset_vectors: Optional[Sequence[Sequence[float]]] = None,
     normal_tilt_vectors: Optional[Sequence[Sequence[float]]] = None,
+    point_offset_bounds: Optional[Sequence[float]] = None,
+    point_offset_sample_count: int = 60,
+    point_offset_seed: Optional[int] = 0,
+    normal_tilt_bounds: Optional[Sequence[float]] = None,
+    normal_tilt_sample_count: int = 60,
+    normal_tilt_seed: Optional[int] = 1,
     contact_failure_scenarios: Optional[Sequence[Any]] = None,
     geometry_scenarios: Optional[Sequence[GeometryScenarioProblem]] = None,
     num_directions: int = 36,
@@ -230,7 +264,13 @@ def rbe_uncertainty_geometry_support_dual(
         application_force_bound=application_force_bound,
         interface_scale_factors=interface_scale_factors,
         point_offset_vectors=point_offset_vectors,
+        point_offset_bounds=point_offset_bounds,
+        point_offset_sample_count=point_offset_sample_count,
+        point_offset_seed=point_offset_seed,
         normal_tilt_vectors=normal_tilt_vectors,
+        normal_tilt_bounds=normal_tilt_bounds,
+        normal_tilt_sample_count=normal_tilt_sample_count,
+        normal_tilt_seed=normal_tilt_seed,
         contact_failure_scenarios=contact_failure_scenarios,
         geometry_scenarios=geometry_scenarios,
     )
@@ -279,6 +319,12 @@ def rbe_uncertainty_geometry_support(
     interface_scale_factors: Optional[Sequence[float]] = None,
     point_offset_vectors: Optional[Sequence[Sequence[float]]] = None,
     normal_tilt_vectors: Optional[Sequence[Sequence[float]]] = None,
+    point_offset_bounds: Optional[Sequence[float]] = None,
+    point_offset_sample_count: int = 60,
+    point_offset_seed: Optional[int] = 0,
+    normal_tilt_bounds: Optional[Sequence[float]] = None,
+    normal_tilt_sample_count: int = 60,
+    normal_tilt_seed: Optional[int] = 1,
     contact_failure_scenarios: Optional[Sequence[Any]] = None,
     geometry_scenarios: Optional[Sequence[GeometryScenarioProblem]] = None,
     num_directions: int = 36,
@@ -298,7 +344,13 @@ def rbe_uncertainty_geometry_support(
         application_force_bound=application_force_bound,
         interface_scale_factors=interface_scale_factors,
         point_offset_vectors=point_offset_vectors,
+        point_offset_bounds=point_offset_bounds,
+        point_offset_sample_count=point_offset_sample_count,
+        point_offset_seed=point_offset_seed,
         normal_tilt_vectors=normal_tilt_vectors,
+        normal_tilt_bounds=normal_tilt_bounds,
+        normal_tilt_sample_count=normal_tilt_sample_count,
+        normal_tilt_seed=normal_tilt_seed,
         contact_failure_scenarios=contact_failure_scenarios,
         geometry_scenarios=geometry_scenarios,
         num_directions=num_directions,
@@ -320,6 +372,12 @@ def rbe_uncertainty_geometry(
     interface_scale_factors: Optional[Sequence[float]] = None,
     point_offset_vectors: Optional[Sequence[Sequence[float]]] = None,
     normal_tilt_vectors: Optional[Sequence[Sequence[float]]] = None,
+    point_offset_bounds: Optional[Sequence[float]] = None,
+    point_offset_sample_count: int = 60,
+    point_offset_seed: Optional[int] = 0,
+    normal_tilt_bounds: Optional[Sequence[float]] = None,
+    normal_tilt_sample_count: int = 60,
+    normal_tilt_seed: Optional[int] = 1,
     contact_failure_scenarios: Optional[Sequence[Any]] = None,
     geometry_scenarios: Optional[Sequence[GeometryScenarioProblem]] = None,
     num_directions: int = 36,
@@ -339,7 +397,13 @@ def rbe_uncertainty_geometry(
         application_force_bound=application_force_bound,
         interface_scale_factors=interface_scale_factors,
         point_offset_vectors=point_offset_vectors,
+        point_offset_bounds=point_offset_bounds,
+        point_offset_sample_count=point_offset_sample_count,
+        point_offset_seed=point_offset_seed,
         normal_tilt_vectors=normal_tilt_vectors,
+        normal_tilt_bounds=normal_tilt_bounds,
+        normal_tilt_sample_count=normal_tilt_sample_count,
+        normal_tilt_seed=normal_tilt_seed,
         contact_failure_scenarios=contact_failure_scenarios,
         geometry_scenarios=geometry_scenarios,
         num_directions=num_directions,
@@ -363,6 +427,12 @@ def _prepare_geometry_scenarios(
     normal_tilt_vectors,
     contact_failure_scenarios,
     geometry_scenarios,
+    point_offset_bounds=None,
+    point_offset_sample_count=60,
+    point_offset_seed=0,
+    normal_tilt_bounds=None,
+    normal_tilt_sample_count=60,
+    normal_tilt_seed=1,
 ):
     load_dofs = _validate_load_dofs(assembly, load_dofs)
     if geometry_scenarios is not None:
@@ -371,7 +441,9 @@ def _prepare_geometry_scenarios(
             for value in (
                 interface_scale_factors,
                 point_offset_vectors,
+                point_offset_bounds,
                 normal_tilt_vectors,
+                normal_tilt_bounds,
                 contact_failure_scenarios,
             )
         ):
@@ -379,23 +451,37 @@ def _prepare_geometry_scenarios(
         return load_dofs, _validate_geometry_scenarios(geometry_scenarios)
 
     scale_factors = _validate_scale_factors(interface_scale_factors)
-    point_offsets = _validate_vectors(point_offset_vectors, "point_offset_vectors", 3, [0.0, 0.0, 0.0])
-    normal_tilts = _validate_vectors(normal_tilt_vectors, "normal_tilt_vectors", 2, [0.0, 0.0])
+    point_offset_scenarios = _point_offset_scenarios(
+        assembly,
+        point_offset_vectors,
+        point_offset_bounds,
+        point_offset_sample_count,
+        point_offset_seed,
+    )
+    normal_tilt_scenarios = _normal_tilt_scenarios(
+        assembly,
+        normal_tilt_vectors,
+        normal_tilt_bounds,
+        normal_tilt_sample_count,
+        normal_tilt_seed,
+    )
     failures = _validate_failure_scenarios(contact_failure_scenarios)
 
     scenarios = []
-    for scale, point_offset, normal_tilt, failure in itertools.product(
+    for scale, point_offset_scenario, normal_tilt_scenario, failure in itertools.product(
         scale_factors,
-        point_offsets,
-        normal_tilts,
+        point_offset_scenarios,
+        normal_tilt_scenarios,
         failures,
     ):
+        point_offsets, point_offset_name = point_offset_scenario
+        normal_tilts, normal_tilt_name = normal_tilt_scenario
         scenario_assembly = copy.deepcopy(assembly)
         _apply_interface_geometry(
             scenario_assembly,
             scale=scale,
-            point_offset=point_offset,
-            normal_tilt=normal_tilt,
+            point_offsets=point_offsets,
+            normal_tilts=normal_tilts,
         )
         problem = _prepare_problem(
             scenario_assembly,
@@ -413,7 +499,7 @@ def _prepare_geometry_scenarios(
             baseline_load=np.asarray(problem.baseline_load, dtype=float).ravel(),
             load_projection=problem.load_projection.tocsr(),
             variable_count=problem.equilibrium.shape[1],
-            name=_scenario_name(scale, point_offset, normal_tilt, failure),
+            name=_scenario_name(scale, point_offset_name, normal_tilt_name, failure),
         )
         if failure:
             scenario = _apply_contact_failures(scenario, scenario_assembly, failure)
@@ -513,6 +599,107 @@ def _validate_vectors(vectors, name, dimension, default):
     return normalized
 
 
+def _point_offset_scenarios(assembly, point_offset_vectors, point_offset_bounds, sample_count, seed):
+    if point_offset_vectors is not None:
+        raise ValueError(
+            "point_offset_vectors are no longer supported; use point_offset_bounds or geometry_scenarios."
+        )
+    if point_offset_bounds is None:
+        return [(None, "point offsets nominal")]
+
+    bounds = _validate_bound_vector(point_offset_bounds, "point_offset_bounds", 2)
+    if np.allclose(bounds, 0.0):
+        return [(None, "point offsets nominal")]
+    count = _validate_sample_count(sample_count, "point_offset_sample_count")
+    rng = np.random.default_rng(_validate_seed(seed, "point_offset_seed"))
+    interfaces = _interface_point_counts(assembly)
+
+    scenarios = [(None, "point offsets nominal")]
+    for sample_index in range(1, count):
+        offsets = {}
+        for edge, interface_index, point_count in interfaces:
+            offsets[(edge, interface_index)] = rng.uniform(-bounds, bounds, size=(point_count, 2))
+        scenarios.append((offsets, "point offsets sample {}".format(sample_index)))
+    return scenarios
+
+
+def _normal_tilt_scenarios(assembly, normal_tilt_vectors, normal_tilt_bounds, sample_count, seed):
+    if normal_tilt_vectors is not None and normal_tilt_bounds is not None:
+        raise ValueError("normal_tilt_vectors cannot be combined with normal_tilt_bounds.")
+    if normal_tilt_vectors is not None:
+        vectors = _validate_vectors(normal_tilt_vectors, "normal_tilt_vectors", 2, [0.0, 0.0])
+        return [(vector, "normal tilt {}".format(vector.tolist())) for vector in vectors]
+    if normal_tilt_bounds is None:
+        return [(None, "normal tilt nominal")]
+
+    bounds = _validate_bound_vector(normal_tilt_bounds, "normal_tilt_bounds", 2)
+    if np.allclose(bounds, 0.0):
+        return [(None, "normal tilt nominal")]
+    count = _validate_sample_count(sample_count, "normal_tilt_sample_count")
+    rng = np.random.default_rng(_validate_seed(seed, "normal_tilt_seed"))
+    interfaces = _interface_keys(assembly)
+
+    scenarios = [(None, "normal tilt nominal")]
+    for sample_index in range(1, count):
+        tilts = {}
+        for edge, interface_index in interfaces:
+            tilts[(edge, interface_index)] = rng.uniform(-bounds, bounds, size=2)
+        scenarios.append((tilts, "normal tilt sample {}".format(sample_index)))
+    return scenarios
+
+
+def _validate_bound_vector(bounds, name, dimension):
+    if isinstance(bounds, bool):
+        raise ValueError("{} must be a finite nonnegative scalar or {}D bound vector.".format(name, dimension))
+    if np.isscalar(bounds):
+        values = np.full(dimension, float(bounds), dtype=float)
+    else:
+        try:
+            values = np.asarray(bounds, dtype=float)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "{} must be a finite nonnegative scalar or {}D bound vector.".format(name, dimension)
+            ) from error
+    if values.shape != (dimension,) or not np.all(np.isfinite(values)) or np.any(values < 0.0):
+        raise ValueError("{} must be a finite nonnegative scalar or {}D bound vector.".format(name, dimension))
+    return values
+
+
+def _validate_sample_count(sample_count, name):
+    if isinstance(sample_count, bool) or not isinstance(sample_count, (int, np.integer)):
+        raise ValueError("{} must be a positive integer.".format(name))
+    count = int(sample_count)
+    if count <= 0:
+        raise ValueError("{} must be a positive integer.".format(name))
+    return count
+
+
+def _validate_seed(seed, name):
+    if seed is None:
+        return None
+    if isinstance(seed, bool) or not isinstance(seed, (int, np.integer)):
+        raise ValueError("{} must be an integer or None.".format(name))
+    return int(seed)
+
+
+def _interface_point_counts(assembly):
+    counts = []
+    for edge in assembly.graph.edges(False):
+        interfaces = assembly.graph.edge_attribute(edge, "interfaces") or []
+        for interface_index, interface in enumerate(interfaces):
+            counts.append((edge, interface_index, len(interface.points)))
+    return counts
+
+
+def _interface_keys(assembly):
+    keys = []
+    for edge in assembly.graph.edges(False):
+        interfaces = assembly.graph.edge_attribute(edge, "interfaces") or []
+        for interface_index, _ in enumerate(interfaces):
+            keys.append((edge, interface_index))
+    return keys
+
+
 def _validate_failure_scenarios(contact_failure_scenarios):
     if contact_failure_scenarios is None:
         return [None]
@@ -525,20 +712,39 @@ def _validate_failure_scenarios(contact_failure_scenarios):
     return scenarios
 
 
-def _apply_interface_geometry(assembly, scale, point_offset, normal_tilt):
+def _apply_interface_geometry(assembly, scale, point_offsets, normal_tilts):
     for edge in assembly.graph.edges(False):
         interfaces = assembly.graph.edge_attribute(edge, "interfaces") or []
-        for interface in interfaces:
+        for interface_index, interface in enumerate(interfaces):
             frame = interface.frame
             points = [_xyz_array(point, "interface point") for point in interface.points]
             centroid = np.mean(np.asarray(points), axis=0)
-            offset = (
-                float(point_offset[0]) * np.asarray(frame.xaxis, dtype=float)
-                + float(point_offset[1]) * np.asarray(frame.yaxis, dtype=float)
-                + float(point_offset[2]) * np.asarray(frame.zaxis, dtype=float)
-            )
-            interface.points = [(centroid + scale * (point - centroid) + offset).tolist() for point in points]
-            interface._frame = _tilted_frame(frame, normal_tilt)
+            local_offsets = _point_offsets_for_interface(point_offsets, edge, interface_index, len(points))
+            xaxis = np.asarray(frame.xaxis, dtype=float)
+            yaxis = np.asarray(frame.yaxis, dtype=float)
+            perturbed_points = []
+            for point, local_offset in zip(points, local_offsets):
+                offset = float(local_offset[0]) * xaxis + float(local_offset[1]) * yaxis
+                perturbed_points.append((centroid + scale * (point - centroid) + offset).tolist())
+            interface.points = perturbed_points
+            interface._frame = _tilted_frame(frame, _normal_tilt_for_interface(normal_tilts, edge, interface_index))
+
+
+def _point_offsets_for_interface(point_offsets, edge, interface_index, point_count):
+    if point_offsets is None:
+        return np.zeros((point_count, 2))
+    offsets = np.asarray(point_offsets[(edge, interface_index)], dtype=float)
+    if offsets.shape != (point_count, 2):
+        raise ValueError("Generated point-offset scenario has an invalid shape.")
+    return offsets
+
+
+def _normal_tilt_for_interface(normal_tilts, edge, interface_index):
+    if normal_tilts is None:
+        return np.zeros(2)
+    if isinstance(normal_tilts, dict):
+        return np.asarray(normal_tilts[(edge, interface_index)], dtype=float)
+    return np.asarray(normal_tilts, dtype=float)
 
 
 def _tilted_frame(frame, normal_tilt):
@@ -681,11 +887,11 @@ def _validate_nonnegative_int(value, name):
     return int(value)
 
 
-def _scenario_name(scale, point_offset, normal_tilt, failure):
+def _scenario_name(scale, point_offset_name, normal_tilt_name, failure):
     return "scale={}, offset={}, tilt={}, failure={}".format(
         "{:.6g}".format(scale),
-        np.asarray(point_offset, dtype=float).tolist(),
-        np.asarray(normal_tilt, dtype=float).tolist(),
+        point_offset_name,
+        normal_tilt_name,
         "yes" if failure else "no",
     )
 

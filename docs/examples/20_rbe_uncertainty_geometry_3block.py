@@ -13,6 +13,11 @@ from compas_cra.datastructures import CRA_Assembly
 from compas_cra.equilibrium import plot_rbe_robust_results
 from compas_cra.equilibrium import rbe_uncertainty_geometry_support_dual
 
+XLIM = (-1.0, 0.1)
+ZLIM = (-0.5, 1.0)
+APPLICATION_FORCE_BOUND = 1e6
+GEOMETRY_SAMPLE_COUNT = 60
+
 
 class Arch(object):
     """Create the three-block geometry used for the geometry-uncertainty comparison."""
@@ -110,44 +115,8 @@ def rightmost_side_vertices(block):
     return max(face_coordinates, key=lambda coordinates: sum(point[0] for point in coordinates) / len(coordinates))
 
 
-def single_contact_point_failures(assembly):
-    """Return one topology scenario for every individual interface point loss."""
-    failures = []
-    for u, v in assembly.graph.edges(False):
-        interfaces = assembly.graph.edge_attribute((u, v), "interfaces") or []
-        for interface_index, interface in enumerate(interfaces):
-            for point_index, _ in enumerate(interface.points):
-                failures.append({"points": [(u, v, interface_index, point_index)]})
-    return failures
-
-
-def scenario_count(kwargs):
-    """Return the finite geometry scenario count represented by solver keyword arguments."""
-    count = 1
-    for name in ("interface_scale_factors", "point_offset_vectors", "normal_tilt_vectors"):
-        if name in kwargs and kwargs[name] is not None:
-            count *= len(kwargs[name])
-    if "contact_failure_scenarios" in kwargs and kwargs["contact_failure_scenarios"] is not None:
-        count *= len(kwargs["contact_failure_scenarios"])
-    return count
-
-
-def report_result(label, result, count):
-    """Print a compact geometry-uncertainty analysis summary."""
-    bounded_directions = result.statuses.count("optimal")
-    print(
-        "{}: scenarios={}, bounded={}, feasible_center={}, bounded_directions={}/{}".format(
-            label,
-            count,
-            result.is_bounded,
-            result.feasible_center,
-            bounded_directions,
-            len(result.directions),
-        )
-    )
-
-
-if __name__ == "__main__":
+def build_assembly():
+    """Build the example-18 three-block assembly and detect contact interfaces."""
     geometry = Arch(
         b0_width=0.5,
         b1_height=0.5,
@@ -161,6 +130,89 @@ if __name__ == "__main__":
     )
     assembly = geometry.assembly()
     assembly_interfaces_numpy(assembly)
+    return assembly
+
+
+def sampled_scenario_count(kwargs, bounds_name, count_name):
+    """Return the generated finite sample count for one bounded uncertainty family."""
+    bounds = kwargs.get(bounds_name)
+    if bounds is None:
+        return 1
+    if isinstance(bounds, (int, float)):
+        values = [float(bounds), float(bounds)]
+    else:
+        values = [float(value) for value in bounds]
+    if not any(value > 0.0 for value in values):
+        return 1
+    return int(kwargs.get(count_name, GEOMETRY_SAMPLE_COUNT))
+
+
+def scenario_count(kwargs):
+    """Return the finite geometry scenario count represented by solver keyword arguments."""
+    count = 1
+    if kwargs.get("interface_scale_factors") is not None:
+        count *= len(kwargs["interface_scale_factors"])
+    if kwargs.get("point_offset_bounds") is not None:
+        count *= sampled_scenario_count(kwargs, "point_offset_bounds", "point_offset_sample_count")
+    if kwargs.get("normal_tilt_vectors") is not None:
+        count *= len(kwargs["normal_tilt_vectors"])
+    if kwargs.get("normal_tilt_bounds") is not None:
+        count *= sampled_scenario_count(kwargs, "normal_tilt_bounds", "normal_tilt_sample_count")
+    if kwargs.get("contact_failure_scenarios") is not None:
+        count *= len(kwargs["contact_failure_scenarios"])
+    return count
+
+
+def report_result(group, label, result, count):
+    """Print a compact geometry-uncertainty analysis summary."""
+    bounded_directions = result.statuses.count("optimal")
+    print(
+        "{} | {}: scenarios={}, bounded={}, feasible_center={}, bounded_directions={}/{}".format(
+            group,
+            label,
+            count,
+            result.is_bounded,
+            result.feasible_center,
+            bounded_directions,
+            len(result.directions),
+        )
+    )
+
+
+def solve_cases(assembly, load_dofs, common_options, group, labels_and_kwargs):
+    """Solve one comparison group."""
+    results = []
+    labels = []
+    for label, kwargs in labels_and_kwargs:
+        result = rbe_uncertainty_geometry_support_dual(assembly, load_dofs, **common_options, **kwargs)
+        report_result(group, label, result, scenario_count(kwargs))
+        results.append(result)
+        labels.append(label)
+    return results, labels
+
+
+def save_comparison(results, labels, title, filename):
+    """Save one safe-load comparison figure."""
+    figure, axes = plot_rbe_robust_results(
+        results,
+        labels=labels,
+        show_points=False,
+        show_center=False,
+        xlim=XLIM,
+        ylim=ZLIM,
+    )
+    figure.set_size_inches(9, 5.5)
+    axes.set_xlabel("Block 2 load Fx")
+    axes.set_ylabel("Block 2 load Fz")
+    axes.set_title(title)
+    axes.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), borderaxespad=0)
+    figure.tight_layout()
+    figure.savefig(filename, bbox_inches="tight")
+    return figure
+
+
+if __name__ == "__main__":
+    assembly = build_assembly()
 
     load_dofs = [(2, "fx"), (2, "fz")]
     load_application_points = {
@@ -170,73 +222,103 @@ if __name__ == "__main__":
         "mu": 0.8,
         "density": 1.0,
         "load_application_points": load_application_points,
-        "application_force_bound": 1e6,
+        "application_force_bound": APPLICATION_FORCE_BOUND,
         "num_directions": 72,
     }
-    labels_and_kwargs = [
-        ("nominal", {}),
-        ("region shrink", {"interface_scale_factors": [1.0, 0.95, 0.90]}),
+    comparison_groups = [
         (
-            "point offsets",
-            {
-                "point_offset_vectors": [
-                    [0.0, 0.0, 0.0],
-                    [0.02, 0.0, 0.0],
-                    [-0.02, 0.0, 0.0],
-                    [0.0, 0.02, 0.0],
-                    [0.0, -0.02, 0.0],
-                ],
-            },
+            "region shrink",
+            "Three-block RBE safe-load region: global interface shrink",
+            "docs/examples/20_rbe_uncertainty_geometry_3block_region_shrink.svg",
+            [
+                ("scale 1.0", {"interface_scale_factors": [1.0]}),
+                ("scale 0.9", {"interface_scale_factors": [0.9]}),
+                ("scale 0.8", {"interface_scale_factors": [0.8]}),
+                ("scale 0.7", {"interface_scale_factors": [0.7]}),
+            ],
         ),
         (
-            "normal tilts",
-            {
-                "normal_tilt_vectors": [
-                    [0.0, 0.0],
-                    [math.radians(5.0), 0.0],
-                    [-math.radians(5.0), 0.0],
-                    [0.0, math.radians(5.0)],
-                    [0.0, -math.radians(5.0)],
-                ],
-            },
+            "point offset",
+            "Three-block RBE safe-load region: in-plane contact-point offset box",
+            "docs/examples/20_rbe_uncertainty_geometry_3block_point_offsets.svg",
+            [
+                ("nominal", {}),
+                (
+                    "+/-0.05",
+                    {
+                        "point_offset_bounds": [0.05, 0.05],
+                        "point_offset_sample_count": GEOMETRY_SAMPLE_COUNT,
+                        "point_offset_seed": 20,
+                    },
+                ),
+                (
+                    "+/-0.10",
+                    {
+                        "point_offset_bounds": [0.10, 0.10],
+                        "point_offset_sample_count": GEOMETRY_SAMPLE_COUNT,
+                        "point_offset_seed": 20,
+                    },
+                ),
+                (
+                    "+/-0.15",
+                    {
+                        "point_offset_bounds": [0.15, 0.15],
+                        "point_offset_sample_count": GEOMETRY_SAMPLE_COUNT,
+                        "point_offset_seed": 20,
+                    },
+                ),
+            ],
         ),
-        ("single point loss", {"contact_failure_scenarios": single_contact_point_failures(assembly)}),
         (
-            "shrink + tilt",
-            {
-                "interface_scale_factors": [1.0, 0.95],
-                "normal_tilt_vectors": [
-                    [0.0, 0.0],
-                    [math.radians(3.0), 0.0],
-                    [-math.radians(3.0), 0.0],
-                ],
-            },
+            "normal tilt",
+            "Three-block RBE safe-load region: normal tilt about local y",
+            "docs/examples/20_rbe_uncertainty_geometry_3block_normal_tilts.svg",
+            [
+                ("nominal", {}),
+                (
+                    "+/-5 deg",
+                    {
+                        "normal_tilt_bounds": [0.0, math.radians(5.0)],
+                        "normal_tilt_sample_count": GEOMETRY_SAMPLE_COUNT,
+                        "normal_tilt_seed": 30,
+                    },
+                ),
+                (
+                    "+/-10 deg",
+                    {
+                        "normal_tilt_bounds": [0.0, math.radians(10.0)],
+                        "normal_tilt_sample_count": GEOMETRY_SAMPLE_COUNT,
+                        "normal_tilt_seed": 30,
+                    },
+                ),
+                (
+                    "+/-20 deg",
+                    {
+                        "normal_tilt_bounds": [0.0, math.radians(20.0)],
+                        "normal_tilt_sample_count": GEOMETRY_SAMPLE_COUNT,
+                        "normal_tilt_seed": 30,
+                    },
+                ),
+            ],
         ),
     ]
 
-    results = []
-    labels = []
-    for label, kwargs in labels_and_kwargs:
-        result = rbe_uncertainty_geometry_support_dual(assembly, load_dofs, **common_options, **kwargs)
-        report_result(label, result, scenario_count(kwargs))
-        results.append(result)
-        labels.append(label)
-
-    print("hidden hand-force component bound: 1000000.0 (placeholder)")
-    print("geometry uncertainty is finite-scenario only; listed regions are intersections over generated scenarios")
-
-    figure, axes = plot_rbe_robust_results(
-        results,
-        labels=labels,
-        xlim=(-1.0, 0.1),
-        ylim=(-0.5, 1.0),
+    print("interface scale factors are global: one ratio is applied to every detected interface")
+    print("point_offset_bounds sample independent in-plane offsets per interface point; dw=0")
+    print("normal_tilt_bounds sample independent tilts per interface; this example varies only local y")
+    print(
+        "sampled geometry uncertainty uses N={} deterministic scenarios including nominal".format(
+            GEOMETRY_SAMPLE_COUNT
+        )
     )
-    figure.set_size_inches(10, 6)
-    axes.set_xlabel("Block 2 load Fx")
-    axes.set_ylabel("Block 2 load Fz")
-    axes.set_title("Three-block RBE safe-load regions with finite geometry uncertainty")
-    axes.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), borderaxespad=0)
-    figure.tight_layout()
-    figure.savefig("docs/examples/20_rbe_uncertainty_geometry_3block.svg", bbox_inches="tight")
+    print("safe regions are robust intersections over generated geometry scenarios")
+    print("hidden hand-force component bound: {} (placeholder)".format(APPLICATION_FORCE_BOUND))
+
+    figures = []
+    for group, title, filename, labels_and_kwargs in comparison_groups:
+        results, labels = solve_cases(assembly, load_dofs, common_options, group, labels_and_kwargs)
+        figures.append(save_comparison(results, labels, title, filename))
+        print("saved {}".format(filename))
+
     if plt.get_backend().lower() != "agg":
         plt.show()

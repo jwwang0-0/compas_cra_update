@@ -511,6 +511,7 @@ def plot_rbe_robust_results(
     results: Union[RobustForceResult, Sequence[RobustForceResult]],
     labels: Optional[Sequence[str]] = None,
     ax=None,
+    colors: Optional[Sequence[Any]] = None,
     show_points: bool = True,
     show_center: bool = True,
     show_origin: bool = True,
@@ -531,6 +532,9 @@ def plot_rbe_robust_results(
         Legend labels. Defaults describe each result method.
     ax : :class:`matplotlib.axes.Axes`, optional
         Existing axes. A new figure and axes are created when omitted.
+    colors : sequence, optional
+        Matplotlib colors for the plotted results. Defaults to the CRA color
+        cycle and repeats only when there are more results than colors.
     show_points : bool, optional
         Draw radial boundary points or primal support points.
     show_center : bool, optional
@@ -554,7 +558,8 @@ def plot_rbe_robust_results(
     ImportError
         If Matplotlib is not installed.
     ValueError
-        If no results are provided, labels do not match, or load DOFs differ.
+        If no results are provided, labels do not match, colors are empty, or
+        load DOFs differ.
     TypeError
         If an item is not a :class:`RobustForceResult`.
     """
@@ -591,7 +596,13 @@ def plot_rbe_robust_results(
         axes = ax
         figure = axes.figure
 
-    colors = ("#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9")
+    if colors is None:
+        colors = ("#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9")
+    else:
+        colors = list(colors)
+        if not colors:
+            raise ValueError("colors must contain at least one color.")
+
     for index, (result, label) in enumerate(zip(result_list, labels)):
         color = colors[index % len(colors)]
         if result.inner_polygon:

@@ -20,6 +20,8 @@ from compas_cra.equilibrium import rbe_uncertainty_geometry_support
 from compas_cra.equilibrium import rbe_uncertainty_geometry_support_dual
 from compas_cra.equilibrium import rbe_uncertainty_geometry_support_primal
 from compas_cra.equilibrium.rbe_robust import _prepare_problem
+from compas_cra.equilibrium.rbe_uncertainty_geometry import _normal_tilt_scenarios
+from compas_cra.equilibrium.rbe_uncertainty_geometry import _point_offset_scenarios
 from compas_cra.equilibrium.rbe_uncertainty_geometry import _prepare_geometry_scenarios
 
 
@@ -164,38 +166,91 @@ def test_region_scaling_changes_moment_arms_and_preserves_input_assembly():
     assert np.asarray(interface_points(assembly)) == pytest.approx(np.asarray(original_points))
 
 
-def test_point_offsets_change_equilibrium_moment_arms():
+def test_point_offset_bounds_change_equilibrium_moment_arms():
     assembly = two_block_assembly()
     _, nominal = _prepare_geometry_scenarios(
-        assembly,
-        [(1, "fx"), (1, "fy")],
-        0.84,
-        1.0,
-        None,
-        None,
-        None,
-        None,
-        [[0.0, 0.0, 0.0]],
-        None,
-        None,
-        None,
+        assembly=assembly,
+        load_dofs=[(1, "fx"), (1, "fy")],
+        mu=0.84,
+        density=1.0,
+        external_forces=None,
+        load_application_points=None,
+        application_force_bound=None,
+        interface_scale_factors=None,
+        point_offset_vectors=None,
+        normal_tilt_vectors=None,
+        contact_failure_scenarios=None,
+        geometry_scenarios=None,
     )
-    _, shifted = _prepare_geometry_scenarios(
-        assembly,
-        [(1, "fx"), (1, "fy")],
-        0.84,
-        1.0,
-        None,
-        None,
-        None,
-        None,
-        [[0.1, 0.0, 0.0]],
-        None,
-        None,
-        None,
+    _, sampled = _prepare_geometry_scenarios(
+        assembly=assembly,
+        load_dofs=[(1, "fx"), (1, "fy")],
+        mu=0.84,
+        density=1.0,
+        external_forces=None,
+        load_application_points=None,
+        application_force_bound=None,
+        interface_scale_factors=None,
+        point_offset_vectors=None,
+        normal_tilt_vectors=None,
+        contact_failure_scenarios=None,
+        geometry_scenarios=None,
+        point_offset_bounds=[0.1, 0.0],
+        point_offset_sample_count=3,
+        point_offset_seed=10,
     )
 
-    assert shifted[0].equilibrium.toarray() != pytest.approx(nominal[0].equilibrium.toarray())
+    assert len(sampled) == 3
+    assert any(
+        scenario.equilibrium.toarray() != pytest.approx(nominal[0].equilibrium.toarray()) for scenario in sampled
+    )
+
+
+def test_point_offset_bounds_generate_independent_in_plane_samples():
+    assembly = two_block_assembly()
+    scenarios = _point_offset_scenarios(
+        assembly,
+        point_offset_vectors=None,
+        point_offset_bounds=[0.1, 0.2],
+        sample_count=4,
+        seed=5,
+    )
+    offsets = scenarios[1][0][((0, 1), 0)]
+
+    assert len(scenarios) == 4
+    assert scenarios[0][0] is None
+    assert offsets.shape == (4, 2)
+    assert np.all(offsets[:, 0] <= 0.1)
+    assert np.all(offsets[:, 0] >= -0.1)
+    assert np.all(offsets[:, 1] <= 0.2)
+    assert np.all(offsets[:, 1] >= -0.2)
+    assert not np.allclose(offsets, offsets[0])
+
+
+def test_point_offset_bounds_change_equilibrium_without_normal_offset():
+    assembly = two_block_assembly()
+    _, bounded = _prepare_geometry_scenarios(
+        assembly=assembly,
+        load_dofs=[(1, "fx"), (1, "fy")],
+        mu=0.84,
+        density=1.0,
+        external_forces=None,
+        load_application_points=None,
+        application_force_bound=None,
+        interface_scale_factors=None,
+        point_offset_vectors=None,
+        normal_tilt_vectors=None,
+        contact_failure_scenarios=None,
+        geometry_scenarios=None,
+        point_offset_bounds=[0.1, 0.0],
+        point_offset_sample_count=3,
+        point_offset_seed=7,
+    )
+
+    assert len(bounded) == 3
+    assert any(
+        bounded[0].equilibrium.toarray() != pytest.approx(scenario.equilibrium.toarray()) for scenario in bounded[1:]
+    )
 
 
 def test_normal_tilts_rotate_frame_based_equilibrium_directions():
@@ -231,6 +286,24 @@ def test_normal_tilts_rotate_frame_based_equilibrium_directions():
 
     assert tilted[0].equilibrium.toarray() != pytest.approx(nominal[0].equilibrium.toarray())
     assert tilted[0].inequalities.shape == nominal[0].inequalities.shape
+
+
+def test_normal_tilt_bounds_generate_per_interface_samples():
+    assembly = two_block_assembly()
+    scenarios = _normal_tilt_scenarios(
+        assembly,
+        normal_tilt_vectors=None,
+        normal_tilt_bounds=[0.0, math.radians(5.0)],
+        sample_count=4,
+        seed=6,
+    )
+    tilts = [scenario[0][((0, 1), 0)] for scenario in scenarios[1:]]
+
+    assert len(scenarios) == 4
+    assert scenarios[0][0] is None
+    assert all(tilt[0] == pytest.approx(0.0) for tilt in tilts)
+    assert all(-math.radians(5.0) <= tilt[1] <= math.radians(5.0) for tilt in tilts)
+    assert len({float(tilt[1]) for tilt in tilts}) > 1
 
 
 def test_contact_failure_constraints_zero_selected_contact_variables_only():
@@ -287,7 +360,9 @@ def test_geometry_primal_and_dual_support_formulations_match():
     kwargs = {
         "density": 1,
         "interface_scale_factors": [1.0, 0.95],
-        "point_offset_vectors": [[0.0, 0.0, 0.0], [0.02, 0.0, 0.0]],
+        "point_offset_bounds": [0.02, 0.0],
+        "point_offset_sample_count": 4,
+        "point_offset_seed": 11,
         "normal_tilt_vectors": [[0.0, 0.0], [math.radians(2.0), 0.0]],
         "num_directions": 8,
     }
@@ -305,7 +380,9 @@ def test_geometry_radial_points_satisfy_dual_halfspaces():
     kwargs = {
         "density": 1,
         "interface_scale_factors": [1.0, 0.95],
-        "point_offset_vectors": [[0.0, 0.0, 0.0], [0.02, 0.0, 0.0]],
+        "point_offset_bounds": [0.02, 0.0],
+        "point_offset_sample_count": 4,
+        "point_offset_seed": 12,
         "num_directions": 8,
     }
     sampled = rbe_uncertainty_geometry_sample(assembly, [(1, "fx"), (1, "fy")], **kwargs)
@@ -339,8 +416,17 @@ def test_four_point_hidden_application_works_with_geometry_uncertainty():
     [
         ({"interface_scale_factors": []}, "interface_scale_factors"),
         ({"interface_scale_factors": [0.0]}, "positive finite"),
-        ({"point_offset_vectors": [[0.0, 0.0]]}, "3D vector"),
+        ({"point_offset_vectors": [[0.0, 0.0, 0.0]]}, "no longer supported"),
+        ({"point_offset_bounds": [0.0, 0.0, 0.0]}, "2D bound"),
+        ({"point_offset_bounds": [-0.1, 0.1]}, "nonnegative"),
+        ({"point_offset_bounds": [0.1, 0.1], "point_offset_sample_count": 0}, "positive integer"),
+        ({"point_offset_bounds": [0.1, 0.1], "point_offset_seed": 0.5}, "integer or None"),
         ({"normal_tilt_vectors": [[0.0, 0.0, 0.0]]}, "2D vector"),
+        ({"normal_tilt_vectors": [[0.0, 0.0]], "normal_tilt_bounds": [0.1, 0.1]}, "cannot be combined"),
+        ({"normal_tilt_bounds": [0.0, 0.0, 0.0]}, "2D bound"),
+        ({"normal_tilt_bounds": [0.0, -0.1]}, "nonnegative"),
+        ({"normal_tilt_bounds": [0.1, 0.1], "normal_tilt_sample_count": 0}, "positive integer"),
+        ({"normal_tilt_bounds": [0.1, 0.1], "normal_tilt_seed": 0.5}, "integer or None"),
         ({"contact_failure_scenarios": []}, "contact_failure_scenarios"),
         ({"contact_failure_scenarios": [{"points": [(0, 1, 0, 99)]}]}, "Unknown failed point"),
     ],

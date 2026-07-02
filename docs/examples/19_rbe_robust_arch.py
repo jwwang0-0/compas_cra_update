@@ -4,6 +4,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from compas.geometry import Translation
 from compas_assembly.datastructures import Block
 
 from compas_cra.algorithms import assembly_interfaces_numpy
@@ -11,6 +12,8 @@ from compas_cra.datastructures import CRA_Assembly
 from compas_cra.equilibrium import plot_rbe_robust_results
 from compas_cra.equilibrium import rbe_robust_support_primal
 from compas_cra.geometry import Arch
+from compas_cra.viewers import cra_view_ex
+from compas_cra.viewers.cra_view import _load_compas_view2
 
 HEIGHT = 5
 SPAN = 10
@@ -22,6 +25,7 @@ MU = 0.7
 DENSITY = 1.0
 NUM_DIRECTIONS = 36
 APPLICATION_FORCE_BOUND = 1e6
+SHOW_COMPAS_VIEW2_ASSEMBLY = plt.get_backend().lower() != "agg"
 VIEW_XLIM = (-3.0, 0.5)
 VIEW_YLIM = (-3.2, 2.4)
 MAX_ZOOM_SPAN = 10.0
@@ -67,6 +71,107 @@ def construction_stage(blocks, stage):
     assembly.set_boundary_conditions([0])
     assembly_interfaces_numpy(assembly, nmax=10, amin=1e-2, tmax=1e-2)
     return assembly
+
+
+def assembly_bounds(assembly):
+    """Return coordinate-wise bounds for all blocks in an assembly."""
+    coordinates = []
+    for node in assembly.graph.nodes():
+        block = assembly.graph.node_attribute(node, "block")
+        for vertex in block.vertices():
+            coordinates.append(point_coordinates(block.vertex_coordinates(vertex)))
+
+    lower = [min(coordinate[axis] for coordinate in coordinates) for axis in range(3)]
+    upper = [max(coordinate[axis] for coordinate in coordinates) for axis in range(3)]
+    return lower, upper
+
+
+def assembly_display_scale(assembly):
+    """Return a readable scale for viewer offsets and load-direction arrows."""
+    lower, upper = assembly_bounds(assembly)
+    spans = [upper[axis] - lower[axis] for axis in range(3)]
+    return max(spans + [0.25])
+
+
+def translated_display_assembly(assembly, offset):
+    """Build a translated display copy of an assembly."""
+    transformation = Translation.from_vector(offset)
+    display = CRA_Assembly()
+    support_nodes = []
+    for node in assembly.graph.nodes():
+        block = assembly.graph.node_attribute(node, "block")
+        display.add_block(block.copy(cls=Block).transformed(transformation), node=node)
+        if assembly.graph.node_attribute(node, "is_support"):
+            support_nodes.append(node)
+    display.set_boundary_conditions(support_nodes)
+    assembly_interfaces_numpy(display, nmax=10, amin=1e-2, tmax=1e-2)
+    return display
+
+
+def load_application_centroid(assembly, load_node):
+    """Return the centroid of the four rightmost-side load application points."""
+    points = rightmost_side_vertices(assembly.graph.node_attribute(load_node, "block"))
+    return [sum(point[axis] for point in points) / len(points) for axis in range(3)]
+
+
+def add_load_direction_arrows(viewer, assembly, load_node):
+    """Add positive Fx and Fz load-direction arrows to a compas_view2 viewer."""
+    _, _, Arrow = _load_compas_view2()
+    origin = load_application_centroid(assembly, load_node)
+    length = 0.18 * assembly_display_scale(assembly)
+    viewer.add(
+        Arrow(origin, [length, 0, 0], head_portion=0.28, head_width=0.10, body_width=0.025),
+        facecolor=(0.9, 0.0, 0.0),
+        show_lines=False,
+    )
+    viewer.add(
+        Arrow(origin, [0, 0, length], head_portion=0.28, head_width=0.10, body_width=0.025),
+        facecolor=(0.0, 0.2, 0.9),
+        show_lines=False,
+    )
+
+
+def show_compas_view2_construction(blocks):
+    """Show the default-thickness construction stages in one compas_view2 window."""
+    view2_app, _, _ = _load_compas_view2()
+    viewer = view2_app.App(
+        title="Example 19 robust RBE construction assemblies",
+        width=1600,
+        height=900,
+        viewmode="shaded",
+        show_grid=True,
+    )
+    full_assembly = construction_stage(blocks, NUM_BLOCKS)
+    lower, upper = assembly_bounds(full_assembly)
+    x_step = upper[0] - lower[0] + 1.0
+    y_step = max(upper[1] - lower[1] + 1.0, 1.5)
+    columns = 5
+
+    for index, stage in enumerate(range(2, NUM_BLOCKS + 1)):
+        row, column = divmod(index, columns)
+        assembly = construction_stage(blocks, stage)
+        stage_lower, _ = assembly_bounds(assembly)
+        offset = [
+            column * x_step - stage_lower[0],
+            row * y_step - stage_lower[1],
+            0,
+        ]
+        display = translated_display_assembly(assembly, offset)
+        cra_view_ex(
+            viewer,
+            display,
+            blocks=True,
+            interfaces=True,
+            forces=False,
+            forcesdirect=False,
+            forcesline=False,
+            weights=False,
+            displacements=False,
+        )
+        add_load_direction_arrows(viewer, display, stage - 1)
+
+    print("compas_view2 construction view: red arrow = +Fx, blue arrow = +Fz")
+    viewer.run()
 
 
 def finite_result_points(result):
@@ -232,7 +337,10 @@ if __name__ == "__main__":
         if thickness == THICKNESS:
             save_svg(figure, OUTPUT_SVG)
 
-    if plt.get_backend().lower() != "agg":
+    if SHOW_COMPAS_VIEW2_ASSEMBLY:
+        plt.show(block=False)
+        show_compas_view2_construction(construction_blocks(THICKNESS))
+    elif plt.get_backend().lower() != "agg":
         plt.show()
     else:
         for figure in figures:

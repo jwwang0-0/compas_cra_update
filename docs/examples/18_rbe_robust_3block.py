@@ -14,6 +14,8 @@ from compas_cra.equilibrium import plot_rbe_robust_results
 from compas_cra.equilibrium import rbe_robust_sample
 from compas_cra.equilibrium import rbe_robust_support_dual
 from compas_cra.equilibrium import rbe_robust_support_primal
+from compas_cra.viewers import cra_view_ex
+from compas_cra.viewers.cra_view import _load_compas_view2
 
 PLOT_METHODS = ("primal",)
 # PLOT_METHODS = ("radial", "primal", "dual")
@@ -21,6 +23,7 @@ BOUNDARY_METHOD = "dual"
 SHOW_BOUNDARY_LINES = PLOT_METHODS != ("radial",)
 PRINT_BOUNDARY_EQUATIONS = True
 AUTO_LIMITS_FOR_RADIAL_ONLY = True
+SHOW_COMPAS_VIEW2_ASSEMBLY = plt.get_backend().lower() != "agg"
 XLIM = (-1.0, 0.1)
 YLIM = (-0.5, 1.0)
 
@@ -198,6 +201,97 @@ def build_compound_b1_b2_assembly(geometry):
     if not interfaces:
         raise RuntimeError("Compound b1+b2 assembly did not find a b0-(b1+b2) interface.")
     return assembly
+
+
+def assembly_bounds(assembly):
+    """Return coordinate-wise bounds for all blocks in an assembly."""
+    coordinates = []
+    for node in assembly.graph.nodes():
+        block = assembly.graph.node_attribute(node, "block")
+        for vertex in block.vertices():
+            coordinates.append(point_coordinates(block.vertex_coordinates(vertex)))
+
+    lower = [min(coordinate[axis] for coordinate in coordinates) for axis in range(3)]
+    upper = [max(coordinate[axis] for coordinate in coordinates) for axis in range(3)]
+    return lower, upper
+
+
+def assembly_display_scale(assembly):
+    """Return a readable scale for viewer offsets and load-direction arrows."""
+    lower, upper = assembly_bounds(assembly)
+    spans = [upper[axis] - lower[axis] for axis in range(3)]
+    return max(spans + [0.25])
+
+
+def translated_display_assembly(assembly, offset, interface_options=None):
+    """Build a translated display copy of an assembly."""
+    transformation = Translation.from_vector(offset)
+    display = CRA_Assembly()
+    support_nodes = []
+    for node in assembly.graph.nodes():
+        block = assembly.graph.node_attribute(node, "block")
+        display.add_block(block.copy(cls=Block).transformed(transformation), node=node)
+        if assembly.graph.node_attribute(node, "is_support"):
+            support_nodes.append(node)
+    display.set_boundary_conditions(support_nodes)
+    assembly_interfaces_numpy(display, **(interface_options or {}))
+    return display
+
+
+def load_application_centroid(assembly, load_node):
+    """Return the centroid of the four rightmost-side load application points."""
+    points = rightmost_side_vertices(assembly.graph.node_attribute(load_node, "block"))
+    return [sum(point[axis] for point in points) / len(points) for axis in range(3)]
+
+
+def add_load_direction_arrows(viewer, assembly, load_node):
+    """Add positive Fx and Fz load-direction arrows to a compas_view2 viewer."""
+    _, _, Arrow = _load_compas_view2()
+    origin = load_application_centroid(assembly, load_node)
+    length = 0.22 * assembly_display_scale(assembly)
+    viewer.add(
+        Arrow(origin, [length, 0, 0], head_portion=0.28, head_width=0.10, body_width=0.025),
+        facecolor=(0.9, 0.0, 0.0),
+        show_lines=False,
+    )
+    viewer.add(
+        Arrow(origin, [0, 0, length], head_portion=0.28, head_width=0.10, body_width=0.025),
+        facecolor=(0.0, 0.2, 0.9),
+        show_lines=False,
+    )
+
+
+def show_compas_view2_assemblies(cases):
+    """Show one interactive compas_view2 window with translated analysis assemblies."""
+    view2_app, _, _ = _load_compas_view2()
+    viewer = view2_app.App(
+        title="Example 18 robust RBE assemblies",
+        width=1600,
+        height=900,
+        viewmode="shaded",
+        show_grid=False,
+    )
+    cursor = 0.0
+    gap = 0.8
+    for assembly, load_node, interface_options in cases:
+        lower, upper = assembly_bounds(assembly)
+        offset = [cursor - lower[0], 0, 0]
+        display = translated_display_assembly(assembly, offset, interface_options=interface_options)
+        cra_view_ex(
+            viewer,
+            display,
+            blocks=True,
+            interfaces=True,
+            forces=False,
+            forcesdirect=False,
+            forcesline=False,
+            weights=False,
+            displacements=False,
+        )
+        add_load_direction_arrows(viewer, display, load_node)
+        cursor += upper[0] - lower[0] + gap
+    print("compas_view2 assembly view: red arrow = +Fx, blue arrow = +Fz")
+    viewer.run()
 
 
 def robust_case_results(assembly, load_node, options):
@@ -577,5 +671,14 @@ if __name__ == "__main__":
     )
     figure.suptitle("Boundary-condition comparison for block 2 safe-load regions")
     figure.tight_layout()
-    if plt.get_backend().lower() != "agg":
+    if SHOW_COMPAS_VIEW2_ASSEMBLY:
+        plt.show(block=False)
+        show_compas_view2_assemblies(
+            [
+                (b1_fixed_assembly, 2, None),
+                (b0_fixed_assembly, 2, None),
+                (compound_assembly, 2, None),
+            ]
+        )
+    elif plt.get_backend().lower() != "agg":
         plt.show()

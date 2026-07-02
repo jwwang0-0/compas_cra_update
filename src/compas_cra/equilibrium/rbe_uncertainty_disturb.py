@@ -5,14 +5,16 @@ loads. The selected ``load_dofs`` define the plotted load ``u``. Disturbance
 uncertainty is introduced independently through ``uncertainty_load_dofs`` or a
 direct ``uncertainty_basis`` matrix ``W``. Foundation tilt uncertainty is
 represented as scenario-dependent gravity direction changes while keeping
-geometry, contact normals, friction cones, and visible load projection fixed.
+geometry, contact normals, friction cones, and structural matrices fixed. Tilt
+safe regions are reported in the world XZ load frame by default; each scenario
+maps the common world visible load into the local tilted structure frame.
 
 For uncertainty vertices ``xi_s``, the robust safe set is
 
 .. math::
 
     U_R = \{u \mid \forall s,\ \exists x_s:
-    A x_s = -(p_0 + W \xi_s),\ H x_s \leq h,\ P x_s = u\}.
+    A x_s = -(p_s + W \xi_s),\ H x_s \leq h,\ P x_s = T_s u\}.
 
 The implementation enumerates polytope vertices and therefore remains a linear
 program for the linearized RBE friction cone.
@@ -20,6 +22,7 @@ program for the linearized RBE friction cone.
 
 import math
 import time
+from dataclasses import dataclass
 from typing import Any
 from typing import Optional
 from typing import Sequence
@@ -43,6 +46,14 @@ from .rbe_robust import _prepare_problem
 from .rbe_robust import _validate_tolerance
 
 
+@dataclass(frozen=True)
+class _UncertainScenario:
+    """One load/disturbance scenario with a visible-load frame transform."""
+
+    load: np.ndarray
+    load_transform: np.ndarray
+
+
 def rbe_uncertainty_disturb_sample(
     assembly: Assembly,
     load_dofs: Sequence[Tuple[Any, str]],
@@ -61,6 +72,8 @@ def rbe_uncertainty_disturb_sample(
     timer: bool = False,
     tilt_angle_bounds: Optional[Sequence[float]] = None,
     tilt_angle_count: int = 2,
+    tilt_angles: Optional[Sequence[float]] = None,
+    tilt_load_frame: str = "world",
 ) -> RobustForceResult:
     """Approximate the disturbance-robust safe load range by radial sampling."""
     start_time = time.time()
@@ -73,7 +86,7 @@ def rbe_uncertainty_disturb_sample(
         load_application_points,
         application_force_bound,
     )
-    scenario_loads = _scenario_loads(
+    scenarios = _scenario_records(
         problem,
         assembly=assembly,
         density=density,
@@ -83,17 +96,19 @@ def rbe_uncertainty_disturb_sample(
         uncertainty_basis=uncertainty_basis,
         tilt_angle_bounds=tilt_angle_bounds,
         tilt_angle_count=tilt_angle_count,
+        tilt_angles=tilt_angles,
+        tilt_load_frame=tilt_load_frame,
     )
     directions = _directions(num_directions)
     options = dict(solver_options or {})
     _validate_tolerance(tolerance)
-    analysis = _analyze_load_set_uncertain(problem, scenario_loads, options)
+    analysis = _analyze_load_set_uncertain(problem, scenarios, options)
 
     statuses = []
     radial_limits = []
     boundary_points = []
     for direction in directions:
-        status, limit = _solve_radial_uncertain(problem, direction, analysis.feasible_center, scenario_loads, options)
+        status, limit = _solve_radial_uncertain(problem, direction, analysis.feasible_center, scenarios, options)
         statuses.append(status)
         radial_limits.append(limit)
         if limit is not None:
@@ -135,6 +150,8 @@ def rbe_uncertainty_disturb_support_primal(
     timer: bool = False,
     tilt_angle_bounds: Optional[Sequence[float]] = None,
     tilt_angle_count: int = 2,
+    tilt_angles: Optional[Sequence[float]] = None,
+    tilt_load_frame: str = "world",
 ) -> RobustForceResult:
     """Approximate the disturbance-robust safe load range with primal supports."""
     start_time = time.time()
@@ -147,7 +164,7 @@ def rbe_uncertainty_disturb_support_primal(
         load_application_points,
         application_force_bound,
     )
-    scenario_loads = _scenario_loads(
+    scenarios = _scenario_records(
         problem,
         assembly=assembly,
         density=density,
@@ -157,18 +174,20 @@ def rbe_uncertainty_disturb_support_primal(
         uncertainty_basis=uncertainty_basis,
         tilt_angle_bounds=tilt_angle_bounds,
         tilt_angle_count=tilt_angle_count,
+        tilt_angles=tilt_angles,
+        tilt_load_frame=tilt_load_frame,
     )
     directions = _directions(num_directions)
     options = dict(solver_options or {})
     _validate_tolerance(tolerance)
-    analysis = _analyze_load_set_uncertain(problem, scenario_loads, options)
+    analysis = _analyze_load_set_uncertain(problem, scenarios, options)
 
     statuses = []
     support_values = []
     support_points = []
     halfspaces = []
     for direction in directions:
-        status, support, point = _solve_primal_support_uncertain(problem, direction, scenario_loads, options)
+        status, support, point = _solve_primal_support_uncertain(problem, direction, scenarios, options)
         statuses.append(status)
         support_values.append(support)
         if support is not None:
@@ -216,6 +235,8 @@ def rbe_uncertainty_disturb_support_dual(
     timer: bool = False,
     tilt_angle_bounds: Optional[Sequence[float]] = None,
     tilt_angle_count: int = 2,
+    tilt_angles: Optional[Sequence[float]] = None,
+    tilt_load_frame: str = "world",
 ) -> RobustForceResult:
     """Approximate the disturbance-robust safe load range with dual supports."""
     start_time = time.time()
@@ -228,7 +249,7 @@ def rbe_uncertainty_disturb_support_dual(
         load_application_points,
         application_force_bound,
     )
-    scenario_loads = _scenario_loads(
+    scenarios = _scenario_records(
         problem,
         assembly=assembly,
         density=density,
@@ -238,17 +259,19 @@ def rbe_uncertainty_disturb_support_dual(
         uncertainty_basis=uncertainty_basis,
         tilt_angle_bounds=tilt_angle_bounds,
         tilt_angle_count=tilt_angle_count,
+        tilt_angles=tilt_angles,
+        tilt_load_frame=tilt_load_frame,
     )
     directions = _directions(num_directions)
     options = dict(solver_options or {})
     _validate_tolerance(tolerance)
-    analysis = _analyze_load_set_uncertain(problem, scenario_loads, options)
+    analysis = _analyze_load_set_uncertain(problem, scenarios, options)
 
     statuses = []
     support_values = []
     halfspaces = []
     for direction in directions:
-        status, support = _solve_dual_support_uncertain(problem, direction, scenario_loads, options)
+        status, support = _solve_dual_support_uncertain(problem, direction, scenarios, options)
         statuses.append(status)
         support_values.append(support)
         if support is not None:
@@ -291,6 +314,8 @@ def rbe_uncertainty_disturb_support(
     timer: bool = False,
     tilt_angle_bounds: Optional[Sequence[float]] = None,
     tilt_angle_count: int = 2,
+    tilt_angles: Optional[Sequence[float]] = None,
+    tilt_load_frame: str = "world",
 ) -> RobustForceResult:
     """Alias for :func:`rbe_uncertainty_disturb_support_dual`."""
     return rbe_uncertainty_disturb_support_dual(
@@ -311,6 +336,8 @@ def rbe_uncertainty_disturb_support(
         timer=timer,
         tilt_angle_bounds=tilt_angle_bounds,
         tilt_angle_count=tilt_angle_count,
+        tilt_angles=tilt_angles,
+        tilt_load_frame=tilt_load_frame,
     )
 
 
@@ -332,6 +359,8 @@ def rbe_uncertainty_disturb(
     timer: bool = False,
     tilt_angle_bounds: Optional[Sequence[float]] = None,
     tilt_angle_count: int = 2,
+    tilt_angles: Optional[Sequence[float]] = None,
+    tilt_load_frame: str = "world",
 ) -> RobustForceResult:
     """Alias for :func:`rbe_uncertainty_disturb_support_dual`."""
     return rbe_uncertainty_disturb_support_dual(
@@ -352,6 +381,8 @@ def rbe_uncertainty_disturb(
         timer=timer,
         tilt_angle_bounds=tilt_angle_bounds,
         tilt_angle_count=tilt_angle_count,
+        tilt_angles=tilt_angles,
+        tilt_load_frame=tilt_load_frame,
     )
 
 
@@ -419,6 +450,45 @@ def _uncertainty_shifts(
     return [np.asarray(basis.dot(vertex)).ravel() for vertex in vertices]
 
 
+def _scenario_records(
+    problem,
+    assembly,
+    density,
+    external_forces,
+    uncertainty_load_dofs,
+    uncertainty_vertices,
+    uncertainty_basis,
+    tilt_angle_bounds,
+    tilt_angle_count,
+    tilt_angles=None,
+    tilt_load_frame="world",
+):
+    """Return scenario load vectors and visible-load transforms."""
+    tilt_load_frame = _validate_tilt_load_frame(tilt_load_frame)
+    shifts = _uncertainty_shifts(
+        problem,
+        assembly=assembly,
+        uncertainty_load_dofs=uncertainty_load_dofs,
+        uncertainty_vertices=uncertainty_vertices,
+        uncertainty_basis=uncertainty_basis,
+    )
+    tilt_scenarios = _tilt_scenarios(
+        problem,
+        assembly=assembly,
+        density=density,
+        external_forces=external_forces,
+        tilt_angle_bounds=tilt_angle_bounds,
+        tilt_angle_count=tilt_angle_count,
+        tilt_angles=tilt_angles,
+        tilt_load_frame=tilt_load_frame,
+    )
+    return [
+        _UncertainScenario(load=baseline + shift, load_transform=load_transform)
+        for baseline, load_transform in tilt_scenarios
+        for shift in shifts
+    ]
+
+
 def _scenario_loads(
     problem,
     assembly,
@@ -429,27 +499,94 @@ def _scenario_loads(
     uncertainty_basis,
     tilt_angle_bounds,
     tilt_angle_count,
+    tilt_angles=None,
+    tilt_load_frame="world",
 ):
     """Return full baseline load vectors for disturbance and tilt scenarios."""
-    shifts = _uncertainty_shifts(
-        problem,
-        assembly=assembly,
-        uncertainty_load_dofs=uncertainty_load_dofs,
-        uncertainty_vertices=uncertainty_vertices,
-        uncertainty_basis=uncertainty_basis,
-    )
-    if tilt_angle_bounds is None:
-        tilted_loads = [problem.baseline_load]
-    else:
-        tilted_loads = _tilted_gravity_loads(
-            assembly,
+    return [
+        scenario.load
+        for scenario in _scenario_records(
+            problem,
+            assembly=assembly,
             density=density,
             external_forces=external_forces,
+            uncertainty_load_dofs=uncertainty_load_dofs,
+            uncertainty_vertices=uncertainty_vertices,
+            uncertainty_basis=uncertainty_basis,
             tilt_angle_bounds=tilt_angle_bounds,
             tilt_angle_count=tilt_angle_count,
-            row_count=problem.equilibrium.shape[0],
+            tilt_angles=tilt_angles,
+            tilt_load_frame=tilt_load_frame,
         )
-    return [baseline + shift for baseline in tilted_loads for shift in shifts]
+    ]
+
+
+def _tilt_scenarios(
+    problem,
+    assembly,
+    density,
+    external_forces,
+    tilt_angle_bounds,
+    tilt_angle_count,
+    tilt_angles,
+    tilt_load_frame,
+):
+    """Return tilted baseline loads and world-to-local visible-load transforms."""
+    if tilt_angles is not None and tilt_angle_bounds is not None:
+        raise ValueError("Provide tilt_angles or tilt_angle_bounds, not both.")
+    identity = np.eye(2)
+    if tilt_angles is None and tilt_angle_bounds is None:
+        return [(problem.baseline_load, identity)]
+
+    angles = (
+        _explicit_tilt_angles(tilt_angles)
+        if tilt_angles is not None
+        else _tilt_angles(
+            tilt_angle_bounds,
+            tilt_angle_count,
+        )
+    )
+    return [
+        (
+            _tilted_gravity_load(assembly, density, external_forces, angle, problem.equilibrium.shape[0]),
+            identity if tilt_load_frame == "structure" else _tilt_load_transform(angle, problem.load_dofs),
+        )
+        for angle in angles
+    ]
+
+
+def _validate_tilt_load_frame(tilt_load_frame):
+    """Return a normalized tilt load-frame option."""
+    if not isinstance(tilt_load_frame, str):
+        raise ValueError("tilt_load_frame must be 'world' or 'structure'.")
+    normalized = tilt_load_frame.lower()
+    if normalized not in ("world", "structure"):
+        raise ValueError("tilt_load_frame must be 'world' or 'structure'.")
+    return normalized
+
+
+def _explicit_tilt_angles(tilt_angles):
+    """Return finite explicit tilt angles."""
+    try:
+        angles = np.asarray(list(tilt_angles), dtype=float)
+    except (TypeError, ValueError) as error:
+        raise ValueError("tilt_angles must be a one-dimensional sequence of finite angles.") from error
+    if angles.ndim != 1 or angles.size == 0 or not np.all(np.isfinite(angles)):
+        raise ValueError("tilt_angles must be a one-dimensional sequence of finite angles.")
+    return angles
+
+
+def _tilt_load_transform(theta, load_dofs):
+    """Map world ``Fx/Fz`` load components into the tilted structure frame."""
+    nodes = [node for node, _ in load_dofs]
+    components = [component for _, component in load_dofs]
+    if nodes[0] != nodes[1] or components != ["fx", "fz"]:
+        raise ValueError(
+            "world-frame tilt load transformation requires same-node load_dofs [(node, 'fx'), (node, 'fz')]."
+        )
+    cosine = math.cos(theta)
+    sine = math.sin(theta)
+    return np.asarray([[cosine, sine], [-sine, cosine]], dtype=float)
 
 
 def _tilted_gravity_loads(
@@ -513,10 +650,10 @@ def _tilted_gravity_load(assembly, density, external_forces, theta, row_count):
     return load
 
 
-def _analyze_load_set_uncertain(problem, scenario_loads, options):
+def _analyze_load_set_uncertain(problem, scenarios, options):
     """Find a robust feasible load center and determine global boundedness."""
-    origin_feasible = _is_origin_feasible_uncertain(problem, scenario_loads, options)
-    feasibility_witness = _solve_load_set_feasibility_uncertain(problem, scenario_loads, options)
+    origin_feasible = _is_origin_feasible_uncertain(problem, scenarios, options)
+    feasibility_witness = _solve_load_set_feasibility_uncertain(problem, scenarios, options)
     cardinal_directions = (
         np.array([1.0, 0.0]),
         np.array([-1.0, 0.0]),
@@ -524,8 +661,7 @@ def _analyze_load_set_uncertain(problem, scenario_loads, options):
         np.array([0.0, -1.0]),
     )
     cardinal_results = [
-        _solve_primal_support_uncertain(problem, direction, scenario_loads, options)
-        for direction in cardinal_directions
+        _solve_primal_support_uncertain(problem, direction, scenarios, options) for direction in cardinal_directions
     ]
     is_bounded = all(status == "optimal" for status, _, _ in cardinal_results)
 
@@ -546,15 +682,15 @@ def _analyze_load_set_uncertain(problem, scenario_loads, options):
     )
 
 
-def _is_origin_feasible_uncertain(problem, scenario_loads, options):
+def _is_origin_feasible_uncertain(problem, scenarios, options):
     """Return whether zero visible load is feasible for every disturbance vertex."""
     variable_count = problem.equilibrium.shape[1]
-    scenario_count = len(scenario_loads)
+    scenario_count = len(scenarios)
     equality_rows = []
     equality_rhs = []
-    for scenario, scenario_load in enumerate(scenario_loads):
+    for scenario, scenario_record in enumerate(scenarios):
         equality_rows.append(_scenario_matrix_row(problem.equilibrium, scenario, scenario_count, variable_count, 0))
-        equality_rhs.append(-scenario_load)
+        equality_rhs.append(-scenario_record.load)
         equality_rows.append(
             _scenario_matrix_row(problem.load_projection, scenario, scenario_count, variable_count, 0)
         )
@@ -577,20 +713,20 @@ def _is_origin_feasible_uncertain(problem, scenario_loads, options):
     raise RuntimeError("Uncertain origin feasibility solve failed: {}.".format(result.message))
 
 
-def _solve_load_set_feasibility_uncertain(problem, scenario_loads, options):
+def _solve_load_set_feasibility_uncertain(problem, scenarios, options):
     """Return one common feasible visible load for every disturbance vertex."""
     variable_count = problem.equilibrium.shape[1]
-    scenario_count = len(scenario_loads)
+    scenario_count = len(scenarios)
     total_variables = scenario_count * variable_count + 2
     equality_rows = []
     equality_rhs = []
-    for scenario, scenario_load in enumerate(scenario_loads):
+    for scenario, scenario_record in enumerate(scenarios):
         equality_rows.append(_scenario_matrix_row(problem.equilibrium, scenario, scenario_count, variable_count, 2))
-        equality_rhs.append(-scenario_load)
+        equality_rhs.append(-scenario_record.load)
         equality_rows.append(
             hstack(
                 _scenario_blocks(problem.load_projection, scenario, scenario_count, variable_count)
-                + [-csr_matrix(np.eye(2))],
+                + [-csr_matrix(scenario_record.load_transform)],
                 format="csr",
             )
         )
@@ -613,23 +749,23 @@ def _solve_load_set_feasibility_uncertain(problem, scenario_loads, options):
     raise RuntimeError("Uncertain safe load-set feasibility solve failed: {}.".format(result.message))
 
 
-def _solve_primal_support_uncertain(problem, direction, scenario_loads, options):
+def _solve_primal_support_uncertain(problem, direction, scenarios, options):
     """Solve the robust primal support LP for one direction."""
     variable_count = problem.equilibrium.shape[1]
-    scenario_count = len(scenario_loads)
+    scenario_count = len(scenarios)
     total_variables = scenario_count * variable_count + 2
     objective = np.zeros(total_variables)
     objective[-2:] = -np.asarray(direction, dtype=float)
 
     equality_rows = []
     equality_rhs = []
-    for scenario, scenario_load in enumerate(scenario_loads):
+    for scenario, scenario_record in enumerate(scenarios):
         equality_rows.append(_scenario_matrix_row(problem.equilibrium, scenario, scenario_count, variable_count, 2))
-        equality_rhs.append(-scenario_load)
+        equality_rhs.append(-scenario_record.load)
         equality_rows.append(
             hstack(
                 _scenario_blocks(problem.load_projection, scenario, scenario_count, variable_count)
-                + [-csr_matrix(np.eye(2))],
+                + [-csr_matrix(scenario_record.load_transform)],
                 format="csr",
             )
         )
@@ -654,20 +790,22 @@ def _solve_primal_support_uncertain(problem, direction, scenario_loads, options)
     raise RuntimeError("Uncertain primal support solve failed: {}.".format(result.message))
 
 
-def _solve_radial_uncertain(problem, direction, center, scenario_loads, options):
+def _solve_radial_uncertain(problem, direction, center, scenarios, options):
     """Solve the robust radial LP for one direction from a robust feasible center."""
     variable_count = problem.equilibrium.shape[1]
-    scenario_count = len(scenario_loads)
+    scenario_count = len(scenarios)
     total_variables = scenario_count * variable_count + 1
     objective = np.zeros(total_variables)
     objective[-1] = -1.0
-    direction_column = csr_matrix(-np.asarray(direction, dtype=float).reshape((2, 1)))
+    direction = np.asarray(direction, dtype=float)
+    center = np.asarray(center, dtype=float)
 
     equality_rows = []
     equality_rhs = []
-    for scenario, scenario_load in enumerate(scenario_loads):
+    for scenario, scenario_record in enumerate(scenarios):
+        direction_column = csr_matrix(-scenario_record.load_transform.dot(direction).reshape((2, 1)))
         equality_rows.append(_scenario_matrix_row(problem.equilibrium, scenario, scenario_count, variable_count, 1))
-        equality_rhs.append(-scenario_load)
+        equality_rhs.append(-scenario_record.load)
         equality_rows.append(
             hstack(
                 _scenario_blocks(problem.load_projection, scenario, scenario_count, variable_count)
@@ -675,7 +813,7 @@ def _solve_radial_uncertain(problem, direction, center, scenario_loads, options)
                 format="csr",
             )
         )
-        equality_rhs.append(np.asarray(center, dtype=float))
+        equality_rhs.append(scenario_record.load_transform.dot(center))
 
     result = linprog(
         objective,
@@ -694,16 +832,16 @@ def _solve_radial_uncertain(problem, direction, center, scenario_loads, options)
     raise RuntimeError("Uncertain radial load solve failed: {}.".format(result.message))
 
 
-def _solve_dual_support_uncertain(problem, direction, scenario_loads, options):
+def _solve_dual_support_uncertain(problem, direction, scenarios, options):
     """Solve the robust dual support LP for one direction."""
     equality_rows = problem.equilibrium.shape[0]
     inequality_rows = problem.inequalities.shape[0]
     variable_count = problem.equilibrium.shape[1]
-    scenario_count = len(scenario_loads)
+    scenario_count = len(scenarios)
     block_size = equality_rows + inequality_rows + 2
 
     objective = np.concatenate(
-        [np.concatenate([-scenario_load, problem.inequality_rhs, np.zeros(2)]) for scenario_load in scenario_loads]
+        [np.concatenate([-scenario.load, problem.inequality_rhs, np.zeros(2)]) for scenario in scenarios]
     )
 
     dual_rows = []
@@ -716,15 +854,18 @@ def _solve_dual_support_uncertain(problem, direction, scenario_loads, options):
         dual_rows.append(_dual_scenario_row(scenario_block, scenario, scenario_count, variable_count, block_size))
         dual_rhs.append(np.zeros(variable_count))
 
-    eta_selector = hstack(
-        [
-            csr_matrix((2, equality_rows)),
-            csr_matrix((2, inequality_rows)),
-            csr_matrix(np.eye(2)),
-        ],
-        format="csr",
-    )
-    dual_rows.append(hstack([eta_selector for _ in range(scenario_count)], format="csr"))
+    eta_selectors = [
+        hstack(
+            [
+                csr_matrix((2, equality_rows)),
+                csr_matrix((2, inequality_rows)),
+                csr_matrix(scenario.load_transform.transpose()),
+            ],
+            format="csr",
+        )
+        for scenario in scenarios
+    ]
+    dual_rows.append(hstack(eta_selectors, format="csr"))
     dual_rhs.append(np.asarray(direction, dtype=float))
 
     bounds = []

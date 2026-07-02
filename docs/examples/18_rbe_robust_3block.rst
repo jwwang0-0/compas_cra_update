@@ -16,6 +16,13 @@ available.
 The plot uses fixed viewport limits for comparison. These viewport limits are
 only for visualization and are not physical load constraints.
 
+When run with an interactive Matplotlib backend, the script also opens a
+``compas_view2`` window showing the three analyzed assemblies side by side. The
+red arrow marks the positive ``Fx`` direction and the blue arrow marks the
+positive ``Fz`` direction at the block-2 load application face. These arrows show
+the coordinate convention only, not a solved load magnitude. The viewer is not
+opened when running with ``MPLBACKEND=Agg``.
+
 The dual support result also reports the governing visible boundary equations
 ``a Fx + b Fz <= c`` and labels the equations that intersect the displayed
 viewport.

@@ -17,5 +17,12 @@ SVG for each comparison thickness ``0.3``, ``0.5``, and ``0.8``. Stages with an
 empty safe-load set are marked directly in the corresponding subplot, and small
 safe regions are shown with local zoomed axes.
 
+When run with an interactive Matplotlib backend, the script also opens one
+``compas_view2`` window showing the default-thickness construction stages in a
+grid. For each stage, the red arrow marks the positive ``Fx`` direction and the
+blue arrow marks the positive ``Fz`` direction on the current last block. These
+arrows show the coordinate convention only, not a solved load magnitude. The
+viewer is not opened when running with ``MPLBACKEND=Agg``.
+
 .. literalinclude:: 19_rbe_robust_arch.py
     :language: python

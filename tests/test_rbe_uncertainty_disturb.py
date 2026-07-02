@@ -19,9 +19,11 @@ from compas_cra.equilibrium import rbe_uncertainty_disturb_support
 from compas_cra.equilibrium import rbe_uncertainty_disturb_support_dual
 from compas_cra.equilibrium import rbe_uncertainty_disturb_support_primal
 from compas_cra.equilibrium.rbe_robust import _prepare_problem
+from compas_cra.equilibrium.rbe_robust import _solve_dual_support
 from compas_cra.equilibrium.rbe_uncertainty_disturb import _scenario_loads
 from compas_cra.equilibrium.rbe_uncertainty_disturb import _tilted_gravity_load
 from compas_cra.equilibrium.rbe_uncertainty_disturb import _tilted_gravity_vector
+from compas_cra.equilibrium.rbe_uncertainty_disturb import _tilt_load_transform
 from compas_cra.equilibrium.rbe_uncertainty_disturb import _uncertainty_shifts
 
 
@@ -66,6 +68,10 @@ def four_grasp_points(assembly, node):
 def tilted_external_force(theta):
     """Return the external force shift that converts vertical gravity to tilted gravity."""
     return {1: [-math.sin(theta), 0.0, 1.0 - math.cos(theta), 0.0, 0.0, 0.0]}
+
+
+def support_values_or_infinity(result):
+    return np.asarray([np.inf if support is None else support for support in result.support_values], dtype=float)
 
 
 def test_zero_uncertainty_matches_existing_robust_solvers():
@@ -234,7 +240,7 @@ def test_zero_tilt_gravity_load_matches_existing_baseline():
     )
 
 
-def test_small_tilt_matches_linearized_load_uncertainty():
+def test_structure_frame_small_tilt_matches_linearized_load_uncertainty():
     assembly = two_block_assembly()
     angle = 1e-5
     row_count = _prepare_problem(assembly, [(1, "fx"), (1, "fy")], 0.84, 1.0, None).equilibrium.shape[0]
@@ -245,6 +251,7 @@ def test_small_tilt_matches_linearized_load_uncertainty():
         [(1, "fx"), (1, "fy")],
         density=1,
         tilt_angle_bounds=(-angle, angle),
+        tilt_load_frame="structure",
         num_directions=8,
     )
     linearized = rbe_uncertainty_disturb_support_dual(
@@ -259,7 +266,7 @@ def test_small_tilt_matches_linearized_load_uncertainty():
     assert tilt.support_values == pytest.approx(linearized.support_values, abs=1e-7)
 
 
-def test_tilt_support_matches_intersection_of_manual_tilt_scenarios():
+def test_structure_frame_tilt_support_matches_intersection_of_manual_tilt_scenarios():
     assembly = two_block_assembly()
     angle = math.radians(3)
     angles = [-angle, 0.0, angle]
@@ -269,6 +276,7 @@ def test_tilt_support_matches_intersection_of_manual_tilt_scenarios():
         density=1,
         tilt_angle_bounds=(-angle, angle),
         tilt_angle_count=3,
+        tilt_load_frame="structure",
         num_directions=8,
     )
     manual_results = [
@@ -286,9 +294,60 @@ def test_tilt_support_matches_intersection_of_manual_tilt_scenarios():
     assert tilt.support_values == pytest.approx(expected)
 
 
+def test_world_frame_single_tilt_support_rotates_query_direction():
+    assembly = two_block_assembly()
+    load_dofs = [(1, "fx"), (1, "fz")]
+    angle = math.radians(12)
+    world = rbe_uncertainty_disturb_support_dual(
+        assembly,
+        load_dofs,
+        density=1,
+        tilt_angles=[angle],
+        num_directions=4,
+    )
+    local_problem = _prepare_problem(
+        assembly,
+        load_dofs,
+        0.84,
+        1.0,
+        tilted_external_force(angle),
+    )
+    transform = _tilt_load_transform(angle, load_dofs)
+    expected_statuses = []
+    expected = []
+    for direction in world.directions:
+        status, support = _solve_dual_support(local_problem, transform.dot(np.asarray(direction)), {})
+        expected_statuses.append(status)
+        expected.append(support)
+
+    assert world.statuses == expected_statuses
+    for actual, support in zip(world.support_values, expected):
+        if support is None:
+            assert actual is None
+        else:
+            assert actual == pytest.approx(support)
+
+
+def test_world_frame_tilt_radial_points_satisfy_dual_halfspaces():
+    assembly = two_block_assembly()
+    kwargs = {
+        "density": 1,
+        "tilt_angle_bounds": (-math.radians(2), math.radians(2)),
+        "tilt_angle_count": 3,
+        "num_directions": 8,
+    }
+    sampled = rbe_uncertainty_disturb_sample(assembly, [(1, "fx"), (1, "fz")], **kwargs)
+    dual = rbe_uncertainty_disturb_support_dual(assembly, [(1, "fx"), (1, "fz")], **kwargs)
+
+    for point in sampled.boundary_points:
+        for direction_0, direction_1, support in dual.halfspaces:
+            assert direction_0 * point[0] + direction_1 * point[1] <= support + 1e-7
+
+
 def test_combined_tilt_and_load_uncertainty_uses_cartesian_product_and_is_conservative():
     assembly = two_block_assembly()
-    problem = _prepare_problem(assembly, [(1, "fx"), (1, "fy")], 0.84, 1.0, None)
+    load_dofs = [(1, "fx"), (1, "fz")]
+    problem = _prepare_problem(assembly, load_dofs, 0.84, 1.0, None)
     angle = math.radians(2)
     scenario_loads = _scenario_loads(
         problem,
@@ -304,7 +363,7 @@ def test_combined_tilt_and_load_uncertainty_uses_cartesian_product_and_is_conser
 
     load_only = rbe_uncertainty_disturb_support_dual(
         assembly,
-        [(1, "fx"), (1, "fy")],
+        load_dofs,
         density=1,
         uncertainty_vertices=[[-0.05], [0.05]],
         uncertainty_load_dofs=[(1, "fx")],
@@ -312,7 +371,7 @@ def test_combined_tilt_and_load_uncertainty_uses_cartesian_product_and_is_conser
     )
     tilt_only = rbe_uncertainty_disturb_support_dual(
         assembly,
-        [(1, "fx"), (1, "fy")],
+        load_dofs,
         density=1,
         tilt_angle_bounds=(-angle, angle),
         tilt_angle_count=3,
@@ -320,7 +379,7 @@ def test_combined_tilt_and_load_uncertainty_uses_cartesian_product_and_is_conser
     )
     combined = rbe_uncertainty_disturb_support_dual(
         assembly,
-        [(1, "fx"), (1, "fy")],
+        load_dofs,
         density=1,
         uncertainty_vertices=[[-0.05], [0.05]],
         uncertainty_load_dofs=[(1, "fx")],
@@ -330,8 +389,8 @@ def test_combined_tilt_and_load_uncertainty_uses_cartesian_product_and_is_conser
     )
 
     assert len(scenario_loads) == 6
-    assert np.all(np.asarray(combined.support_values) <= np.asarray(load_only.support_values) + 1e-8)
-    assert np.all(np.asarray(combined.support_values) <= np.asarray(tilt_only.support_values) + 1e-8)
+    assert np.all(support_values_or_infinity(combined) <= support_values_or_infinity(load_only) + 1e-8)
+    assert np.all(support_values_or_infinity(combined) <= support_values_or_infinity(tilt_only) + 1e-8)
 
 
 def test_tilt_primal_and_dual_support_formulations_match():
@@ -342,8 +401,8 @@ def test_tilt_primal_and_dual_support_formulations_match():
         "tilt_angle_count": 3,
         "num_directions": 8,
     }
-    primal = rbe_uncertainty_disturb_support_primal(assembly, [(1, "fx"), (1, "fy")], **kwargs)
-    dual = rbe_uncertainty_disturb_support_dual(assembly, [(1, "fx"), (1, "fy")], **kwargs)
+    primal = rbe_uncertainty_disturb_support_primal(assembly, [(1, "fx"), (1, "fz")], **kwargs)
+    dual = rbe_uncertainty_disturb_support_dual(assembly, [(1, "fx"), (1, "fz")], **kwargs)
 
     assert primal.support_values == pytest.approx(dual.support_values)
 
@@ -367,4 +426,24 @@ def test_invalid_tilt_inputs_raise(tilt_angle_bounds, tilt_angle_count, message)
             tilt_angle_bounds=tilt_angle_bounds,
             tilt_angle_count=tilt_angle_count,
             num_directions=4,
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs, load_dofs, message",
+    [
+        ({"tilt_angles": []}, [(1, "fx"), (1, "fz")], "tilt_angles"),
+        ({"tilt_angles": [0.0], "tilt_angle_bounds": (-0.1, 0.1)}, [(1, "fx"), (1, "fz")], "not both"),
+        ({"tilt_load_frame": "bad"}, [(1, "fx"), (1, "fz")], "tilt_load_frame"),
+        ({"tilt_angles": [0.1]}, [(1, "fx"), (1, "fy")], "world-frame tilt"),
+    ],
+)
+def test_invalid_explicit_tilt_inputs_raise(kwargs, load_dofs, message):
+    with pytest.raises(ValueError, match=message):
+        rbe_uncertainty_disturb_support_dual(
+            two_block_assembly(),
+            load_dofs,
+            density=1,
+            num_directions=4,
+            **kwargs,
         )
