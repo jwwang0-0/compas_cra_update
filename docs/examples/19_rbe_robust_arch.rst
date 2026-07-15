@@ -7,7 +7,7 @@ blocks ``0`` through ``n - 1`` only, block 0 is fixed, and the free two-dimensio
 load is applied to the current last block.
 
 At each stage, the visible ``Fx``-``Fz`` load is realized by hidden point forces
-at the four vertices of the current last block's exposed rightmost face. The
+at the four vertices of the current last block's right exposed radial face. The
 resulting hidden moment is generated geometrically by ``r x q``. Each hidden
 force component uses a large ``1e6`` placeholder bound; this should later be
 replaced by real actuator, contact, or material limits.

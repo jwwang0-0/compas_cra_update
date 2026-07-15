@@ -15,7 +15,7 @@ world ``Fx``-``Fz`` axes.
 The plot compares the certainty case with symmetric tilt intervals
 ``±2.5°``, ``±5°``, ``±7.5°``, and ``±10°``. Each nonzero interval checks the two
 endpoint tilt scenarios. The block 3 visible load is realized through hidden
-point forces at the four vertices of block 3's rightmost face, with the same
+point forces at the four vertices of block 3's right exposed radial face, with the same
 large ``1e6`` placeholder force bound used by the robust examples.
 
 Use ``tilt_load_frame="structure"`` only when intentionally reproducing the

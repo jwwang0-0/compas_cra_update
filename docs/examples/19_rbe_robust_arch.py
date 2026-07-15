@@ -41,13 +41,53 @@ def point_coordinates(point):
     return list(point)
 
 
-def rightmost_side_vertices(block):
-    """Return the four vertices of the block face with maximum x-coordinate."""
-    face_coordinates = []
+def arch_center():
+    """Return the center of the arch circular axis."""
+    radius = HEIGHT / 2.0 + SPAN**2 / (8.0 * HEIGHT)
+    return [0.0, 0.0, HEIGHT - radius]
+
+
+def unique_xz_points(coordinates, tolerance=1e-9):
+    """Return unique face points by x-z coordinates."""
+    unique = []
+    for point in coordinates:
+        if not any(
+            abs(point[0] - other[0]) <= tolerance and abs(point[2] - other[2]) <= tolerance for other in unique
+        ):
+            unique.append(point)
+    return unique
+
+
+def radial_alignment_score(points):
+    """Return how far two x-z points deviate from one arch radial line."""
+    center = arch_center()
+    vectors = [[point[0] - center[0], point[2] - center[2]] for point in points]
+    lengths = [(vector[0] ** 2 + vector[1] ** 2) ** 0.5 for vector in vectors]
+    if min(lengths) <= 1e-12:
+        return None
+    cross = vectors[0][0] * vectors[1][1] - vectors[0][1] * vectors[1][0]
+    return abs(cross) / (lengths[0] * lengths[1])
+
+
+def exposed_radial_side_vertices(block):
+    """Return vertices of the loaded block's right exposed radial face."""
+    candidates = []
     for face in block.faces():
         coordinates = [point_coordinates(block.vertex_coordinates(vertex)) for vertex in block.face_vertices(face)]
-        face_coordinates.append(coordinates)
-    return max(face_coordinates, key=lambda coordinates: sum(point[0] for point in coordinates) / len(coordinates))
+        y_values = [point[1] for point in coordinates]
+        if max(y_values) - min(y_values) <= 1e-9:
+            continue
+        unique_points = unique_xz_points(coordinates)
+        if len(unique_points) != 2:
+            continue
+        score = radial_alignment_score(unique_points)
+        if score is None or score > 1e-8:
+            continue
+        centroid_x = sum(point[0] for point in coordinates) / len(coordinates)
+        candidates.append((centroid_x, coordinates))
+    if not candidates:
+        raise ValueError("Could not find an exposed radial load face for the arch block.")
+    return max(candidates, key=lambda item: item[0])[1]
 
 
 def construction_blocks(thickness):
@@ -109,15 +149,14 @@ def translated_display_assembly(assembly, offset):
 
 
 def load_application_centroid(assembly, load_node):
-    """Return the centroid of the four rightmost-side load application points."""
-    points = rightmost_side_vertices(assembly.graph.node_attribute(load_node, "block"))
+    """Return the centroid of the four right exposed radial-face load application points."""
+    points = exposed_radial_side_vertices(assembly.graph.node_attribute(load_node, "block"))
     return [sum(point[axis] for point in points) / len(points) for axis in range(3)]
 
 
-def add_load_direction_arrows(viewer, assembly, load_node):
+def add_load_direction_arrows(viewer, assembly, origin):
     """Add positive Fx and Fz load-direction arrows to a compas_view2 viewer."""
     _, _, Arrow = _load_compas_view2()
-    origin = load_application_centroid(assembly, load_node)
     length = 0.18 * assembly_display_scale(assembly)
     viewer.add(
         Arrow(origin, [length, 0, 0], head_portion=0.28, head_width=0.10, body_width=0.025),
@@ -168,7 +207,9 @@ def show_compas_view2_construction(blocks):
             weights=False,
             displacements=False,
         )
-        add_load_direction_arrows(viewer, display, stage - 1)
+        origin = load_application_centroid(assembly, stage - 1)
+        display_origin = [origin[axis] + offset[axis] for axis in range(3)]
+        add_load_direction_arrows(viewer, display, display_origin)
 
     print("compas_view2 construction view: red arrow = +Fx, blue arrow = +Fz")
     viewer.run()
@@ -269,7 +310,7 @@ def render_thickness(thickness):
                 [(load_node, "fx"), (load_node, "fz")],
                 mu=MU,
                 density=DENSITY,
-                load_application_points={load_node: rightmost_side_vertices(block)},
+                load_application_points={load_node: exposed_radial_side_vertices(block)},
                 application_force_bound=APPLICATION_FORCE_BOUND,
                 num_directions=NUM_DIRECTIONS,
             )
@@ -310,7 +351,9 @@ def render_thickness(thickness):
         axis.text(
             0.05,
             0.65,
-            "thickness = {}\nFour rightmost-side points\nforce bound = 1e6\nplaceholder only".format(thickness),
+            "thickness = {}\nFour right exposed radial-face points\nforce bound = 1e6\nplaceholder only".format(
+                thickness
+            ),
             transform=axis.transAxes,
             va="top",
         )

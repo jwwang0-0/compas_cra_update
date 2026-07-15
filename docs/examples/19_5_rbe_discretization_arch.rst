@@ -8,7 +8,7 @@ case is a full arch with block ``0`` fixed and the visible ``Fx``-``Fz`` load
 applied to the last block.
 
 The block count is swept from ``15`` through ``30`` while keeping span, height,
-thickness, depth, friction, density, and hidden load-application model fixed.
+thickness, depth, friction, density, and hidden load-application radial-face model fixed.
 For each discretization, the script solves the dual robust support problem and
 prints a compact metrics table with boundedness, polygon area, and visible
 ``Fx``/``Fz`` bounds.

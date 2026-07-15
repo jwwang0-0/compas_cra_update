@@ -17,7 +17,7 @@ where ``Wi`` is the corresponding block weight and ``r`` is ``5%``, ``10%``,
 four-block analysis, not a construction-process simulation.
 
 The block 3 visible load is realized through hidden point forces at the four
-vertices of block 3's rightmost face. The hidden force bound remains the large
+vertices of block 3's right exposed radial face. The hidden force bound remains the large
 ``1e6`` placeholder used by the robust examples.
 
 .. literalinclude:: 19_2_rbe_uncertainty_disturb_arch.py

@@ -5,12 +5,12 @@ Full-Arch Boundary Failure-Mode Diagnostics
 This example analyzes the complete example-19 arch, not the construction
 sequence. The arch uses block ``0`` as the only support and applies the visible
 ``Fx``-``Fz`` load to the last block. The visible load is realized through
-hidden point forces at the four vertices of the last block's rightmost face.
+hidden point forces at the four vertices of the last block's right exposed radial face.
 
 The script enforces a 2D-extruded diagnostic model by tying every front/back
 contact pair with matching ``x`` and ``z`` coordinates. The tied variables have
 the same normal and friction values and directions. The same tie is applied to
-the hidden point forces on the last block's rightmost face, so the end load is
+the hidden point forces on the last block's right exposed radial face, so the end load is
 also applied as a 2D pair model.
 
 The script computes the robust visible safe-load polygon from this tied

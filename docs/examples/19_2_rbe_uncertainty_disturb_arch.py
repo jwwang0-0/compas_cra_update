@@ -34,13 +34,53 @@ def point_coordinates(point):
     return list(point)
 
 
-def rightmost_side_vertices(block):
-    """Return the four vertices of the block face with maximum x-coordinate."""
-    face_coordinates = []
+def arch_center():
+    """Return the center of the arch circular axis."""
+    radius = HEIGHT / 2.0 + SPAN**2 / (8.0 * HEIGHT)
+    return [0.0, 0.0, HEIGHT - radius]
+
+
+def unique_xz_points(coordinates, tolerance=1e-9):
+    """Return unique face points by x-z coordinates."""
+    unique = []
+    for point in coordinates:
+        if not any(
+            abs(point[0] - other[0]) <= tolerance and abs(point[2] - other[2]) <= tolerance for other in unique
+        ):
+            unique.append(point)
+    return unique
+
+
+def radial_alignment_score(points):
+    """Return how far two x-z points deviate from one arch radial line."""
+    center = arch_center()
+    vectors = [[point[0] - center[0], point[2] - center[2]] for point in points]
+    lengths = [(vector[0] ** 2 + vector[1] ** 2) ** 0.5 for vector in vectors]
+    if min(lengths) <= 1e-12:
+        return None
+    cross = vectors[0][0] * vectors[1][1] - vectors[0][1] * vectors[1][0]
+    return abs(cross) / (lengths[0] * lengths[1])
+
+
+def exposed_radial_side_vertices(block):
+    """Return vertices of the loaded block's right exposed radial face."""
+    candidates = []
     for face in block.faces():
         coordinates = [point_coordinates(block.vertex_coordinates(vertex)) for vertex in block.face_vertices(face)]
-        face_coordinates.append(coordinates)
-    return max(face_coordinates, key=lambda coordinates: sum(point[0] for point in coordinates) / len(coordinates))
+        y_values = [point[1] for point in coordinates]
+        if max(y_values) - min(y_values) <= 1e-9:
+            continue
+        unique_points = unique_xz_points(coordinates)
+        if len(unique_points) != 2:
+            continue
+        score = radial_alignment_score(unique_points)
+        if score is None or score > 1e-8:
+            continue
+        centroid_x = sum(point[0] for point in coordinates) / len(coordinates)
+        candidates.append((centroid_x, coordinates))
+    if not candidates:
+        raise ValueError("Could not find an exposed radial load face for the arch block.")
+    return max(candidates, key=lambda item: item[0])[1]
 
 
 def left_to_right_blocks():
@@ -113,7 +153,7 @@ def solve_disturbance_cases(assembly):
     common_options = {
         "mu": MU,
         "density": DENSITY,
-        "load_application_points": {3: rightmost_side_vertices(block_3)},
+        "load_application_points": {3: exposed_radial_side_vertices(block_3)},
         "application_force_bound": APPLICATION_FORCE_BOUND,
         "num_directions": NUM_DIRECTIONS,
     }
@@ -164,7 +204,7 @@ def render_results(results, labels):
         0.02,
         0.02,
         "Blocks 1 and 2: independent Fx,Fz disturbances in +/- r Wi\n"
-        "Block 3 load uses four rightmost-side points; force bound = 1e6 placeholder",
+        "Block 3 load uses four right exposed radial-face points; force bound = 1e6 placeholder",
         transform=axes.transAxes,
         fontsize=8,
         va="bottom",

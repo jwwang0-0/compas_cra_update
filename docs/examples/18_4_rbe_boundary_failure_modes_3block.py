@@ -1,19 +1,17 @@
-"""Diagnose failure modes just outside full-arch robust safe-load boundaries."""
+"""Diagnose failure modes just outside example-18 robust safe-load boundaries."""
 
+import importlib.util
 import math
 from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from compas_assembly.datastructures import Block
 from scipy.optimize import linprog
 from scipy.sparse import csr_matrix
 from scipy.sparse import hstack
 from scipy.sparse import vstack
 
-from compas_cra.algorithms import assembly_interfaces_numpy
-from compas_cra.datastructures import CRA_Assembly
 from compas_cra.equilibrium.cra_helper import equilibrium_setup
 from compas_cra.equilibrium.cra_helper import external_force_setup
 from compas_cra.equilibrium.cra_helper import friction_setup
@@ -25,25 +23,24 @@ from compas_cra.equilibrium.rbe_robust import _application_load_basis
 from compas_cra.equilibrium.rbe_robust import _directions
 from compas_cra.equilibrium.rbe_robust import _outer_polygon
 from compas_cra.equilibrium.rbe_robust import _solve_dual_support
-from compas_cra.geometry import Arch
 
-HEIGHT = 5
-SPAN = 10
-THICKNESS = 0.5
-DEPTH = 0.5
-NUM_BLOCKS = 20
-MU = 0.7
+LOAD_NODE = 2
+LOAD_DOFS = [(LOAD_NODE, "fx"), (LOAD_NODE, "fz")]
+MU = 0.8
 DENSITY = 1.0
-NUM_DIRECTIONS = 36
-APPLICATION_FORCE_BOUND = 1e6
+NUM_DIRECTIONS = 72
+APPLICATION_FORCE_BOUND = 1e3
 BOUNDARY_OFFSET = 1e-3
 TENSION_TOLERANCE = 1e-7
 OPEN_CONTACT_TOLERANCE = 1e-7
+FRICTION_LIMIT_TOLERANCE = 1e-6
 HALFSPACE_TOLERANCE = 1e-7
 SUPPORT_TOLERANCE = 1e-8
 ENFORCE_2D_TIES = True
 PAIR_COORDINATE_TOLERANCE = 1e-8
 OUTPUT_SVG = Path(__file__).with_suffix(".svg")
+XLIM = (-1.0, 0.1)
+YLIM = (-0.5, 1.0)
 
 
 @dataclass
@@ -69,10 +66,43 @@ class BoundaryDiagnostic:
 
     label: str
     halfspace: np.ndarray
+    segment: np.ndarray
     midpoint: np.ndarray
     outside_load: np.ndarray
     compression_result: object
     penalty_result: object
+
+
+def load_example18_module():
+    """Load the numeric example-18 module by file path."""
+    path = Path(__file__).with_name("18_rbe_robust_3block.py")
+    spec = importlib.util.spec_from_file_location("example18", path)
+    if spec is None or spec.loader is None:
+        raise ImportError("Could not load example-18 module from {}.".format(path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def example18_geometry_kwargs():
+    """Return the nominal example-18 geometry parameters."""
+    return {
+        "b0_width": 0.5,
+        "b1_height": 0.5,
+        "b1_base": 0.5,
+        "b2_base": 0.6,
+        "b2_top": 0.9,
+        "alpha": math.pi / 2,
+        "beta": 2 * math.pi / 3,
+        "gamma": 2 * math.pi / 3,
+        "thickness": 1,
+    }
+
+
+def build_example18_assembly(example18):
+    """Build the full three-block example-18 assembly with block 0 fixed."""
+    geometry = example18.Arch(**example18_geometry_kwargs())
+    return example18.build_assembly(geometry, block_nodes=[0, 1, 2], support_nodes=[0])
 
 
 def point_coordinates(point):
@@ -87,80 +117,13 @@ def xyz_array(point):
     return np.asarray(point_coordinates(point), dtype=float)
 
 
-def arch_center():
-    """Return the center of the arch circular axis."""
-    radius = HEIGHT / 2.0 + SPAN**2 / (8.0 * HEIGHT)
-    return [0.0, 0.0, HEIGHT - radius]
-
-
-def unique_xz_points(coordinates, tolerance=1e-9):
-    """Return unique face points by x-z coordinates."""
-    unique = []
-    for point in coordinates:
-        if not any(
-            abs(point[0] - other[0]) <= tolerance and abs(point[2] - other[2]) <= tolerance for other in unique
-        ):
-            unique.append(point)
-    return unique
-
-
-def radial_alignment_score(points):
-    """Return how far two x-z points deviate from one arch radial line."""
-    center = arch_center()
-    vectors = [[point[0] - center[0], point[2] - center[2]] for point in points]
-    lengths = [(vector[0] ** 2 + vector[1] ** 2) ** 0.5 for vector in vectors]
-    if min(lengths) <= 1e-12:
-        return None
-    cross = vectors[0][0] * vectors[1][1] - vectors[0][1] * vectors[1][0]
-    return abs(cross) / (lengths[0] * lengths[1])
-
-
-def exposed_radial_side_vertices(block):
-    """Return vertices of the loaded block's right exposed radial face."""
-    candidates = []
-    for face in block.faces():
-        coordinates = [point_coordinates(block.vertex_coordinates(vertex)) for vertex in block.face_vertices(face)]
-        y_values = [point[1] for point in coordinates]
-        if max(y_values) - min(y_values) <= 1e-9:
-            continue
-        unique_points = unique_xz_points(coordinates)
-        if len(unique_points) != 2:
-            continue
-        score = radial_alignment_score(unique_points)
-        if score is None or score > 1e-8:
-            continue
-        centroid_x = sum(point[0] for point in coordinates) / len(coordinates)
-        candidates.append((centroid_x, coordinates))
-    if not candidates:
-        raise ValueError("Could not find an exposed radial load face for the arch block.")
-    return max(candidates, key=lambda item: item[0])[1]
-
-
-def build_full_arch(num_blocks=NUM_BLOCKS):
-    """Build a full left-to-right arch assembly with block 0 fixed."""
-    arch = Arch(
-        height=HEIGHT,
-        span=SPAN,
-        thickness=THICKNESS,
-        depth=DEPTH,
-        num_blocks=num_blocks,
-        extra_support=False,
-    )
-    assembly = CRA_Assembly()
-    for node, mesh in enumerate(reversed(arch.blocks())):
-        assembly.add_block(mesh.copy(cls=Block), node=node)
-    assembly.set_boundary_conditions([0])
-    assembly_interfaces_numpy(assembly, nmax=10, amin=1e-2, tmax=1e-2)
-    return assembly
-
-
-def load_setup(assembly):
+def load_setup(example18, assembly):
     """Return the visible load and hidden application-point setup."""
-    load_node = max(assembly.graph.nodes())
-    block = assembly.graph.node_attribute(load_node, "block")
-    load_dofs = [(load_node, "fx"), (load_node, "fz")]
-    application_points = {load_node: [np.asarray(point, dtype=float) for point in exposed_radial_side_vertices(block)]}
-    return load_node, load_dofs, application_points
+    block = assembly.graph.node_attribute(LOAD_NODE, "block")
+    application_points = {
+        LOAD_NODE: [xyz_array(point) for point in example18.rightmost_side_vertices(block)],
+    }
+    return LOAD_NODE, LOAD_DOFS, application_points
 
 
 def xz_pair_key(point):
@@ -205,7 +168,7 @@ def contact_front_back_pairs(assembly):
 
 
 def application_front_back_pairs(points):
-    """Return hidden load-variable point pairs for the right exposed radial face."""
+    """Return hidden load-variable point pairs for the rightmost application face."""
     return front_back_pairs(list(enumerate(points)))
 
 
@@ -436,6 +399,14 @@ def penalty_total_tension(result, assembly):
     return float(np.sum(penalty_contact_forces(result, assembly)[:, 1]))
 
 
+def friction_utilization(fn_plus, fu, fv):
+    """Return friction utilization or ``None`` for open contacts."""
+    if fn_plus <= OPEN_CONTACT_TOLERANCE:
+        return None
+    tangent = math.sqrt(fu * fu + fv * fv)
+    return tangent / (MU * fn_plus)
+
+
 def feasibility_label(result):
     """Return a compact LP status label."""
     if result.status == 0:
@@ -458,27 +429,82 @@ def boundary_halfspace(midpoint, halfspaces):
     return halfspaces[int(np.argmin(residuals))]
 
 
-def boundary_diagnostics(result, compression_problem, penalty_problem, assembly):
-    """Create diagnostics for unique visible-load polygon boundary edges."""
-    polygon = np.asarray(result.outer_polygon, dtype=float)
-    if polygon.ndim != 2 or polygon.shape[0] < 3:
-        raise ValueError("Example 19-4 requires a bounded dual outer polygon with at least three vertices.")
+def line_box_segment(halfspace, xlim, ylim, tolerance=1e-9):
+    """Return one support-line segment clipped to a rectangular viewport."""
+    a, b, c = halfspace
+    points = []
+
+    if abs(b) > tolerance:
+        for x in xlim:
+            z = (c - a * x) / b
+            if ylim[0] - tolerance <= z <= ylim[1] + tolerance:
+                points.append(np.asarray([x, z], dtype=float))
+    if abs(a) > tolerance:
+        for z in ylim:
+            x = (c - b * z) / a
+            if xlim[0] - tolerance <= x <= xlim[1] + tolerance:
+                points.append(np.asarray([x, z], dtype=float))
+
+    unique = []
+    for point in points:
+        if not any(np.linalg.norm(point - existing) <= tolerance for existing in unique):
+            unique.append(point)
+    if len(unique) < 2:
+        return None
+    return unique[0], unique[1]
+
+
+def clipped_boundary_segment(halfspace, halfspaces, xlim, ylim, tolerance=1e-8):
+    """Return the visible active segment of one support line inside the safe set."""
+    segment = line_box_segment(halfspace, xlim, ylim)
+    if segment is None:
+        return None
+
+    start, end = segment
+    direction = end - start
+    lower = 0.0
+    upper = 1.0
+    for other in np.asarray(halfspaces, dtype=float):
+        value = float(other[:2].dot(start) - other[2])
+        slope = float(other[:2].dot(direction))
+        if abs(slope) <= tolerance:
+            if value > tolerance:
+                return None
+            continue
+        limit = -value / slope
+        if slope > 0.0:
+            upper = min(upper, limit)
+        else:
+            lower = max(lower, limit)
+        if upper < lower - tolerance:
+            return None
+
+    if upper - lower <= tolerance:
+        return None
+    return np.vstack([start + lower * direction, start + upper * direction])
+
+
+def boundary_diagnostics(result, compression_problem, penalty_problem, assembly, xlim=XLIM, ylim=YLIM):
+    """Create diagnostics for support boundary segments visible in the viewport."""
+    if len(result.halfspaces) < 3:
+        raise ValueError("Example 18-4 requires at least three support halfspaces.")
 
     diagnostics = []
     seen = set()
-    for index, point in enumerate(polygon):
-        next_point = polygon[(index + 1) % len(polygon)]
-        midpoint = 0.5 * (point + next_point)
-        halfspace = boundary_halfspace(midpoint, result.halfspaces)
+    for halfspace in np.asarray(result.halfspaces, dtype=float):
         normal = halfspace[:2]
         normal_length = float(np.linalg.norm(normal))
         if normal_length <= HALFSPACE_TOLERANCE:
+            continue
+        segment = clipped_boundary_segment(halfspace, result.halfspaces, xlim, ylim)
+        if segment is None:
             continue
         key = tuple(np.round(halfspace, 10))
         if key in seen:
             continue
         seen.add(key)
 
+        midpoint = 0.5 * (segment[0] + segment[1])
         outside_load = midpoint + BOUNDARY_OFFSET * normal / normal_length
         compression = solve_fixed_visible_load(compression_problem, outside_load)
         penalty = solve_penalty_tension(penalty_problem, assembly, outside_load)
@@ -486,12 +512,15 @@ def boundary_diagnostics(result, compression_problem, penalty_problem, assembly)
             BoundaryDiagnostic(
                 label="B{}".format(len(diagnostics) + 1),
                 halfspace=halfspace,
+                segment=segment,
                 midpoint=midpoint,
                 outside_load=outside_load,
                 compression_result=compression,
                 penalty_result=penalty,
             )
         )
+    if not diagnostics:
+        raise ValueError("No safe-load boundary segments intersect the requested diagnostic viewport.")
     return diagnostics
 
 
@@ -520,11 +549,8 @@ def report_tensile_contacts(diagnostic, assembly):
         fn_plus, fn_minus, fu, fv = contact_forces[contact["index"]]
         if fn_minus <= TENSION_TOLERANCE:
             continue
-        tangent = math.sqrt(fu * fu + fv * fv)
-        if fn_plus > TENSION_TOLERANCE:
-            utilization = "{:.9g}".format(tangent / (MU * fn_plus))
-        else:
-            utilization = "nan"
+        utilization = friction_utilization(fn_plus, fu, fv)
+        utilization_text = "nan" if utilization is None else "{:.9g}".format(utilization)
         print(
             "    edge {edge}, contact {index}, point {point_index}: position={position}, "
             "fn+={fn_plus:.9g}, fn-={fn_minus:.9g}, fn_eff={fn_eff:.9g}, "
@@ -538,7 +564,7 @@ def report_tensile_contacts(diagnostic, assembly):
                 fn_eff=fn_plus - fn_minus,
                 fu=fu,
                 fv=fv,
-                utilization=utilization,
+                utilization=utilization_text,
             )
         )
         printed = True
@@ -572,6 +598,36 @@ def report_tensile_contacts(diagnostic, assembly):
     else:
         print("  no open contacts below {:.1e}".format(OPEN_CONTACT_TOLERANCE))
 
+    sliding_contacts = []
+    for contact in contacts:
+        fn_plus, fn_minus, fu, fv = contact_forces[contact["index"]]
+        utilization = friction_utilization(fn_plus, fu, fv)
+        if utilization is None or utilization < 1.0 - FRICTION_LIMIT_TOLERANCE:
+            continue
+        sliding_contacts.append((contact, fn_plus, fn_minus, fu, fv, utilization))
+
+    if sliding_contacts:
+        print("  contacts at friction limit (about to slide):")
+        for contact, fn_plus, fn_minus, fu, fv, utilization in sliding_contacts:
+            print(
+                "    edge {edge}, contact {index}, point {point_index}: position={position}, "
+                "fn+={fn_plus:.9g}, fn-={fn_minus:.9g}, fn_eff={fn_eff:.9g}, "
+                "fu={fu:.9g}, fv={fv:.9g}, |ft|/(mu*fn+)={utilization:.9g}, about to slide".format(
+                    edge=contact["edge"],
+                    index=contact["index"],
+                    point_index=contact["point_index"],
+                    position=format_point(contact["point"]),
+                    fn_plus=fn_plus,
+                    fn_minus=fn_minus,
+                    fn_eff=fn_plus - fn_minus,
+                    fu=fu,
+                    fv=fv,
+                    utilization=utilization,
+                )
+            )
+    else:
+        print("  no contacts at friction limit within {:.1e}".format(FRICTION_LIMIT_TOLERANCE))
+
 
 def plot_diagnostics(result, diagnostics):
     """Render the safe region and outward boundary test points."""
@@ -581,6 +637,14 @@ def plot_diagnostics(result, diagnostics):
     figure, axes = plt.subplots(figsize=(9, 6))
     axes.fill(polygon[:, 0], polygon[:, 1], color="#0072B2", alpha=0.12, label="safe region")
     axes.plot(closed_polygon[:, 0], closed_polygon[:, 1], color="#0072B2", linewidth=1.5)
+    for diagnostic in diagnostics:
+        axes.plot(
+            diagnostic.segment[:, 0],
+            diagnostic.segment[:, 1],
+            color="black",
+            linewidth=1.3,
+            alpha=0.75,
+        )
 
     midpoints = np.asarray([diagnostic.midpoint for diagnostic in diagnostics])
     outside = np.asarray([diagnostic.outside_load for diagnostic in diagnostics])
@@ -595,20 +659,21 @@ def plot_diagnostics(result, diagnostics):
             fontsize=8,
         )
 
-    coordinates = np.vstack([polygon, midpoints, outside])
-    spans = coordinates.max(axis=0) - coordinates.min(axis=0)
-    padding = np.maximum(0.12 * spans, 0.1)
-    axes.set_xlim(float(coordinates[:, 0].min() - padding[0]), float(coordinates[:, 0].max() + padding[0]))
-    axes.set_ylim(float(coordinates[:, 1].min() - padding[1]), float(coordinates[:, 1].max() + padding[1]))
-    axes.set_xlabel("Last-block load Fx")
-    axes.set_ylabel("Last-block load Fz")
-    axes.set_title("Example 19-4 2D-tied boundary failure-mode check")
+    axes.set_xlim(XLIM)
+    axes.set_ylim(YLIM)
+    axes.set_xlabel("Block 2 load Fx")
+    axes.set_ylabel("Block 2 load Fz")
+    axes.set_title("Example 18-4 viewport boundary failure-mode check")
     axes.set_aspect("equal", adjustable="box")
     axes.grid(True, alpha=0.3)
     axes.text(
         0.02,
         0.02,
-        "red x = boundary midpoint offset outward by {:.1e}".format(BOUNDARY_OFFSET),
+        "diagnostic viewport: Fx={} Fz={}\nred x = visible boundary midpoint offset outward by {:.1e}".format(
+            XLIM,
+            YLIM,
+            BOUNDARY_OFFSET,
+        ),
         transform=axes.transAxes,
         fontsize=8,
         va="bottom",
@@ -627,9 +692,12 @@ def save_svg(figure, path):
 
 
 if __name__ == "__main__":
-    assembly = build_full_arch()
-    load_node, load_dofs, application_points = load_setup(assembly)
-    print("example 19-4 full arch: {} blocks, load node {}".format(NUM_BLOCKS, load_node))
+    example18 = load_example18_module()
+    assembly = build_example18_assembly(example18)
+    load_node, load_dofs, application_points = load_setup(example18, assembly)
+    print("example 18-4 full three-block assembly: load node {}".format(load_node))
+    print("hidden hand-force component bound: {:.6g}".format(APPLICATION_FORCE_BOUND))
+    print("diagnostic viewport: Fx={}, Fz={}".format(XLIM, YLIM))
     print("2D front/back tie constraints enabled: {}".format(ENFORCE_2D_TIES))
     compression_problem = hidden_load_problem(assembly, load_node, load_dofs, application_points, penalty=False)
     penalty_problem = hidden_load_problem(assembly, load_node, load_dofs, application_points, penalty=True)
@@ -660,7 +728,8 @@ if __name__ == "__main__":
         )
     )
 
-    diagnostics = boundary_diagnostics(result, compression_problem, penalty_problem, assembly)
+    diagnostics = boundary_diagnostics(result, compression_problem, penalty_problem, assembly, XLIM, YLIM)
+    print("viewport boundary diagnostics: {}".format(len(diagnostics)))
     for diagnostic in diagnostics:
         report_tensile_contacts(diagnostic, assembly)
 
