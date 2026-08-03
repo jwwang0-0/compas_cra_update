@@ -21,5 +21,11 @@ The script saves two SVG files:
 * ``19_5_rbe_discretization_arch_metrics.svg`` plots polygon area and load
   bounds versus block count.
 
+When run with an interactive Matplotlib backend, the script also opens a
+``compas_view2`` grid view of the 15- through 30-block full arches. The red
+arrow marks positive ``Fx`` and the blue arrow marks positive ``Fz`` at each
+last-block load face. This viewer is disabled under ``MPLBACKEND=Agg`` so SVG
+generation and checks remain headless.
+
 .. literalinclude:: 19_5_rbe_discretization_arch.py
     :language: python

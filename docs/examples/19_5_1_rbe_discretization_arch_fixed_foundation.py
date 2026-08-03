@@ -1,4 +1,4 @@
-"""Compare full-arch robust safe-load regions across arch discretizations."""
+"""Compare full-arch robust safe-load regions with a fixed foundation block."""
 
 import math
 from dataclasses import replace
@@ -6,6 +6,9 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from compas.geometry import Box
+from compas.geometry import Frame
+from compas.geometry import Point
 from compas.geometry import Translation
 from compas_assembly.datastructures import Block
 
@@ -21,6 +24,8 @@ HEIGHT = 5
 SPAN = 10
 THICKNESS = 1
 DEPTH = 1
+FOUNDATION_HEIGHT = THICKNESS
+FOUNDATION_NODE = "foundation"
 NUM_BLOCKS_RANGE = range(15, 31)
 MU = 0.7
 DENSITY = 1.0
@@ -28,6 +33,9 @@ NUM_DIRECTIONS = 36
 APPLICATION_FORCE_BOUND = 1e6
 VIEW_XLIM = (-1.5, 0.5)
 VIEW_YLIM = (1.8, 2.2)
+AUTO_VIEW_LIMITS = True
+VIEW_PADDING_RATIO = 0.18
+MIN_VIEW_SPAN = 0.25
 OUTPUT_SVG = Path(__file__).with_suffix(".svg")
 METRICS_OUTPUT_SVG = OUTPUT_SVG.with_name("{}_metrics.svg".format(OUTPUT_SVG.stem))
 OVERLAY_OUTPUT_SVG = OUTPUT_SVG.with_name("{}_overlay.svg".format(OUTPUT_SVG.stem))
@@ -103,8 +111,15 @@ def exposed_radial_side_vertices(block):
     return max(candidates, key=lambda item: item[0])[1]
 
 
+def foundation_block():
+    """Return a constant foundation block under the left springing face."""
+    center = Point(-SPAN / 2.0 - THICKNESS / 2.0, DEPTH / 2.0, -FOUNDATION_HEIGHT / 2.0)
+    frame = Frame(center, [1, 0, 0], [0, 1, 0])
+    return Block.from_shape(Box(THICKNESS, DEPTH, FOUNDATION_HEIGHT, frame=frame))
+
+
 def build_full_arch(num_blocks):
-    """Build a full left-to-right arch assembly with block 0 fixed."""
+    """Build a full left-to-right arch assembly with a fixed foundation."""
     arch = Arch(
         height=HEIGHT,
         span=SPAN,
@@ -114,11 +129,31 @@ def build_full_arch(num_blocks):
         extra_support=False,
     )
     assembly = CRA_Assembly()
+    assembly.add_block(foundation_block(), node=FOUNDATION_NODE)
     for node, mesh in enumerate(reversed(arch.blocks())):
         assembly.add_block(mesh.copy(cls=Block), node=node)
-    assembly.set_boundary_conditions([0])
+    assembly.set_boundary_conditions([FOUNDATION_NODE])
     assembly_interfaces_numpy(assembly, nmax=10, amin=1e-2, tmax=1e-2)
+    validate_foundation_contact(assembly)
     return assembly
+
+
+def validate_foundation_contact(assembly):
+    """Verify that the fixed foundation only contacts the first arch block."""
+    foundation_edges = []
+    for edge in assembly.graph.edges(False):
+        if FOUNDATION_NODE not in edge:
+            continue
+        interfaces = assembly.graph.edge_attribute(edge, "interfaces") or []
+        if interfaces:
+            foundation_edges.append(edge)
+
+    expected_edges = {(FOUNDATION_NODE, 0), (0, FOUNDATION_NODE)}
+    if not foundation_edges:
+        raise ValueError("The foundation block does not contact arch node 0.")
+    unexpected_edges = [edge for edge in foundation_edges if edge not in expected_edges]
+    if unexpected_edges:
+        raise ValueError("The foundation block has unexpected contact edges: {}.".format(unexpected_edges))
 
 
 def assembly_bounds(assembly):
@@ -179,10 +214,10 @@ def add_load_direction_arrows(viewer, assembly, origin):
 
 
 def show_compas_view2_discretizations():
-    """Show all discretized full arches in one compas_view2 window."""
+    """Show all discretized full arches with foundations in one compas_view2 window."""
     view2_app, _, _ = _load_compas_view2()
     viewer = view2_app.App(
-        title="Example 19-5 arch discretization assemblies",
+        title="Example 19-5-1 fixed-foundation arch discretization assemblies",
         width=1600,
         height=900,
         viewmode="shaded",
@@ -284,7 +319,7 @@ def metric_row(num_blocks, result=None, error=None):
 
 
 def solve_discretization_cases():
-    """Solve full-arch safe-load regions for each block count."""
+    """Solve fixed-foundation full-arch safe-load regions for each block count."""
     results = []
     labels = []
     metrics = []
@@ -345,17 +380,57 @@ def print_metric_row(row):
     )
 
 
+def finite_result_points(result):
+    """Collect finite visible load points from one robust result."""
+    points = []
+    points.extend(result.support_points)
+    points.extend(result.boundary_points)
+    points.extend(result.inner_polygon)
+    points.extend(result.outer_polygon)
+    if result.feasible_center:
+        points.append(result.feasible_center)
+    return [point for point in points if len(point) == 2 and all(np.isfinite(point))]
+
+
+def automatic_view_limits(results):
+    """Return padded plot limits from all solved safe-region points."""
+    points = []
+    for result in results:
+        points.extend(finite_result_points(result))
+    if not points:
+        return VIEW_XLIM, VIEW_YLIM, False
+
+    coordinates = np.asarray(points, dtype=float)
+    limits = []
+    for axis in range(2):
+        lower = float(coordinates[:, axis].min())
+        upper = float(coordinates[:, axis].max())
+        span = max(upper - lower, MIN_VIEW_SPAN)
+        center = 0.5 * (lower + upper)
+        padding = VIEW_PADDING_RATIO * span
+        limits.append((center - 0.5 * span - padding, center + 0.5 * span + padding))
+    return limits[0], limits[1], True
+
+
+def view_limits(results):
+    """Return either automatic or configured plot limits."""
+    if AUTO_VIEW_LIMITS:
+        return automatic_view_limits(results)
+    return VIEW_XLIM, VIEW_YLIM, False
+
+
 def render_regions(results, labels):
     """Render all solved safe-load regions in one comparison plot."""
     plt.rcParams["svg.fonttype"] = "none"
+    xlim, ylim, auto_limits = view_limits(results)
     figure, axes = plot_rbe_robust_results(
         results,
         labels=labels,
         colors=sampled_colormap_colors("turbo", len(results)),
         show_points=False,
         show_center=False,
-        xlim=VIEW_XLIM,
-        ylim=VIEW_YLIM,
+        xlim=xlim,
+        ylim=ylim,
     )
     figure.set_size_inches(10.5, 6.2)
     axes.set_xlabel("Last-block load Fx")
@@ -364,13 +439,24 @@ def render_regions(results, labels):
     axes.text(
         0.02,
         0.02,
-        "Full arch only; block 0 fixed; load on last block\n"
+        "Full arch; fixed foundation; arch block 0 is free\n"
         "Four right exposed radial-face load points; force bound = 1e6 placeholder",
         transform=axes.transAxes,
         fontsize=8,
         va="bottom",
         bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "0.7", "alpha": 0.85},
     )
+    if auto_limits:
+        axes.text(
+            0.98,
+            0.02,
+            "auto view limits",
+            transform=axes.transAxes,
+            fontsize=8,
+            ha="right",
+            va="bottom",
+            bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "0.7", "alpha": 0.85},
+        )
     legend = axes.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), borderaxespad=0, fontsize=8)
     legend.set_draggable(True)
     figure.tight_layout()
@@ -381,6 +467,7 @@ def render_visual_overlay(results, labels):
     """Render a clean overlay of all solved safe-load regions."""
     plt.rcParams["svg.fonttype"] = "none"
     colors = sampled_colormap_colors("turbo", len(results))
+    xlim, ylim, auto_limits = view_limits(results)
     figure, axes = plt.subplots(figsize=(10.5, 6.2))
     for result, label, color in zip(results, labels, colors):
         if len(result.outer_polygon) < 3:
@@ -390,13 +477,24 @@ def render_visual_overlay(results, labels):
         axes.fill(polygon[:, 0], polygon[:, 1], color=color, alpha=0.08)
         axes.plot(closed_polygon[:, 0], closed_polygon[:, 1], color=color, linewidth=1.3, label=label)
 
-    axes.set_xlim(VIEW_XLIM)
-    axes.set_ylim(VIEW_YLIM)
+    axes.set_xlim(xlim)
+    axes.set_ylim(ylim)
     axes.set_aspect("equal", adjustable="box")
     axes.set_xlabel("Last-block load Fx")
     axes.set_ylabel("Last-block load Fz")
-    axes.set_title("Full-arch safe-load regions: visual overlay")
+    axes.set_title("Full-arch safe-load regions with fixed foundation: visual overlay")
     axes.grid(True, alpha=0.3)
+    if auto_limits:
+        axes.text(
+            0.98,
+            0.02,
+            "auto view limits",
+            transform=axes.transAxes,
+            fontsize=8,
+            ha="right",
+            va="bottom",
+            bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "0.7", "alpha": 0.85},
+        )
     legend = axes.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), borderaxespad=0, fontsize=8)
     legend.set_draggable(True)
     figure.tight_layout()
@@ -416,7 +514,7 @@ def render_metrics(metrics):
 
     axes[0].plot(block_counts, metric_array(metrics, "area"), marker="o", color="#0072B2")
     axes[0].set_title("Outer-polygon area")
-    axes[0].set_xlabel("number of blocks")
+    axes[0].set_xlabel("number of arch blocks")
     axes[0].set_ylabel("area")
     axes[0].grid(True, alpha=0.3)
 
@@ -425,12 +523,12 @@ def render_metrics(metrics):
     axes[1].plot(block_counts, metric_array(metrics, "fz_min"), marker="o", label="Fz min")
     axes[1].plot(block_counts, metric_array(metrics, "fz_max"), marker="o", label="Fz max")
     axes[1].set_title("Visible polygon bounds")
-    axes[1].set_xlabel("number of blocks")
+    axes[1].set_xlabel("number of arch blocks")
     axes[1].set_ylabel("load value")
     axes[1].grid(True, alpha=0.3)
     axes[1].legend()
 
-    figure.suptitle("Full-arch discretization metrics")
+    figure.suptitle("Full-arch fixed-foundation discretization metrics")
     figure.tight_layout()
     return figure
 

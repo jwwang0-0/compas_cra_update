@@ -26,11 +26,13 @@ from compas_cra.equilibrium.rbe_robust import _directions
 from compas_cra.equilibrium.rbe_robust import _outer_polygon
 from compas_cra.equilibrium.rbe_robust import _solve_dual_support
 from compas_cra.geometry import Arch
+from compas_cra.viewers import cra_view_ex
+from compas_cra.viewers.cra_view import _load_compas_view2
 
 HEIGHT = 5
 SPAN = 10
-THICKNESS = 0.5
-DEPTH = 0.5
+THICKNESS = 1
+DEPTH = 1
 NUM_BLOCKS = 20
 MU = 0.7
 DENSITY = 1.0
@@ -43,6 +45,7 @@ HALFSPACE_TOLERANCE = 1e-7
 SUPPORT_TOLERANCE = 1e-8
 ENFORCE_2D_TIES = True
 PAIR_COORDINATE_TOLERANCE = 1e-8
+SHOW_COMPAS_VIEW2_ASSEMBLY = plt.get_backend().lower() != "agg"
 OUTPUT_SVG = Path(__file__).with_suffix(".svg")
 
 
@@ -152,6 +155,74 @@ def build_full_arch(num_blocks=NUM_BLOCKS):
     assembly.set_boundary_conditions([0])
     assembly_interfaces_numpy(assembly, nmax=10, amin=1e-2, tmax=1e-2)
     return assembly
+
+
+def assembly_bounds(assembly):
+    """Return coordinate-wise bounds for all blocks in an assembly."""
+    coordinates = []
+    for node in assembly.graph.nodes():
+        block = assembly.graph.node_attribute(node, "block")
+        for vertex in block.vertices():
+            coordinates.append(point_coordinates(block.vertex_coordinates(vertex)))
+
+    lower = [min(coordinate[axis] for coordinate in coordinates) for axis in range(3)]
+    upper = [max(coordinate[axis] for coordinate in coordinates) for axis in range(3)]
+    return lower, upper
+
+
+def assembly_display_scale(assembly):
+    """Return a readable scale for load-direction arrows."""
+    lower, upper = assembly_bounds(assembly)
+    spans = [upper[axis] - lower[axis] for axis in range(3)]
+    return max(spans + [0.25])
+
+
+def load_application_centroid(assembly, load_node):
+    """Return the centroid of the right exposed radial-face load application points."""
+    points = exposed_radial_side_vertices(assembly.graph.node_attribute(load_node, "block"))
+    return [sum(point[axis] for point in points) / len(points) for axis in range(3)]
+
+
+def add_load_direction_arrows(viewer, assembly, origin):
+    """Add positive Fx and Fz load-direction arrows to a compas_view2 viewer."""
+    _, _, Arrow = _load_compas_view2()
+    length = 0.18 * assembly_display_scale(assembly)
+    viewer.add(
+        Arrow(origin, [length, 0, 0], head_portion=0.28, head_width=0.10, body_width=0.025),
+        facecolor=(0.9, 0.0, 0.0),
+        show_lines=False,
+    )
+    viewer.add(
+        Arrow(origin, [0, 0, length], head_portion=0.28, head_width=0.10, body_width=0.025),
+        facecolor=(0.0, 0.2, 0.9),
+        show_lines=False,
+    )
+
+
+def show_compas_view2_assembly(assembly, load_node):
+    """Show the full arch assembly in a compas_view2 window."""
+    view2_app, _, _ = _load_compas_view2()
+    viewer = view2_app.App(
+        title="Example 19-4 boundary failure-mode arch assembly",
+        width=1200,
+        height=750,
+        viewmode="shaded",
+        show_grid=True,
+    )
+    cra_view_ex(
+        viewer,
+        assembly,
+        blocks=True,
+        interfaces=True,
+        forces=False,
+        forcesdirect=False,
+        forcesline=False,
+        weights=False,
+        displacements=False,
+    )
+    add_load_direction_arrows(viewer, assembly, load_application_centroid(assembly, load_node))
+    print("compas_view2 arch view: red arrow = +Fx, blue arrow = +Fz")
+    viewer.run()
 
 
 def load_setup(assembly):
@@ -666,7 +737,10 @@ if __name__ == "__main__":
 
     figure = plot_diagnostics(result, diagnostics)
     save_svg(figure, OUTPUT_SVG)
-    if plt.get_backend().lower() != "agg":
+    if SHOW_COMPAS_VIEW2_ASSEMBLY:
+        plt.show(block=False)
+        show_compas_view2_assembly(assembly, load_node)
+    elif plt.get_backend().lower() != "agg":
         plt.show()
     else:
         plt.close(figure)

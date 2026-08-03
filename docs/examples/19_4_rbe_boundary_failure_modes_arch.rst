@@ -29,5 +29,11 @@ contacts that carry no normal force are visible in the console diagnostic. The
 SVG marks boundary labels, edge midpoints, and outward test points so the
 console report can be mapped back to the safe-load plot.
 
+When run with an interactive Matplotlib backend, the script also opens a
+``compas_view2`` full-arch assembly view. The red arrow marks positive ``Fx``
+and the blue arrow marks positive ``Fz`` at the last-block load face. This
+viewer is disabled under ``MPLBACKEND=Agg`` so automated diagnostics remain
+headless.
+
 .. literalinclude:: 19_4_rbe_boundary_failure_modes_arch.py
     :language: python

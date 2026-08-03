@@ -26,5 +26,10 @@ tilt angles from ``-20`` to ``+20`` degrees in 5 degree increments. These
 single-angle cases use the solver's ``tilt_angles`` argument and are reported
 in the same world ``Fx``-``Fz`` axes.
 
+When run with an interactive Matplotlib backend, the script also opens a
+``compas_view2`` assembly view. The red arrow marks positive ``Fx`` and the
+blue arrow marks positive ``Fz`` at the block-3 load face. This viewer is
+disabled under ``MPLBACKEND=Agg`` so automated SVG generation remains headless.
+
 .. literalinclude:: 19_3_rbe_uncertainty_tilt_arch.py
     :language: python
